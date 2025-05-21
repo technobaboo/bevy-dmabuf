@@ -1,0 +1,16 @@
+[package]
+name = "example_usages"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+zbus = "5.7.0"
+wlx-capture = { git = "https://github.com/galister/wlx-capture", features = [
+	"wlr",
+] }
+bevy-dmabuf.path = ".."
+bevy = { version = "0.16", features = ["wayland", "trace_tracy"] }
+color-eyre = "0.6.3"
+vulkano = "0.35.1"
+tokio = { version = "1", features = ["full"] }
+drm-fourcc = "2.2.0"
