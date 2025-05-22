@@ -5,13 +5,24 @@ use std::{
 
 use ash::vk::{self, SubresourceLayout};
 use bevy::{
-    app::Plugin, asset::{Assets, Handle, RenderAssetUsages}, ecs::{
+    app::Plugin,
+    asset::{Assets, Handle, RenderAssetUsages},
+    ecs::{
         resource::Resource,
         schedule::IntoScheduleConfigs as _,
         system::{Res, ResMut},
-    }, image::Image, log::{error, tracing, warn}, pbr::StandardMaterial, platform::collections::HashMap, prelude::{Deref, DerefMut}, render::{
-        extract_resource::{ExtractResource, ExtractResourcePlugin}, render_asset::{RenderAssetDependency as _, RenderAssets}, renderer::RenderDevice, texture::GpuImage, RenderApp, RenderSet
-    }, utils::default
+    },
+    image::Image,
+    log::{error, info, tracing, warn},
+    platform::collections::HashMap,
+    render::{
+        RenderApp, RenderSet,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::{RenderAssetDependency as _, RenderAssets},
+        renderer::RenderDevice,
+        texture::GpuImage,
+    },
+    utils::default,
 };
 use drm_fourcc::DrmFourcc;
 use thiserror::Error;
@@ -124,7 +135,7 @@ fn get_imported_descriptor(buf: &DmabufBuffer) -> Result<wgpu::TextureDescriptor
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
     .ok_or(ImportError::FormatInvalid)?;
-    println!("{vulkan_format:?}");
+    info!("{vulkan_format:?}");
     Ok(wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -172,7 +183,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                 let used_modifier = drm_format_properties
                     .iter()
                     .inspect(|v| {
-                        println!("{v:?}");
+                        info!("{v:?}");
                     })
                     .find(|v| v.drm_format_modifier == buf.modifier)
                     .ok_or(ImportError::ModifierInvalid)?;
@@ -256,9 +267,11 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     )
                     .map_err(ImportError::VulkanImageCreationFailed)?;
 
+                let fd = buf.planes.first().unwrap().dmabuf_fd.as_raw_fd();
+                info!(fd);
                 let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
                     .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                    .fd(buf.planes.first().unwrap().dmabuf_fd.as_fd().as_raw_fd());
+                    .fd(fd);
 
                 let mem_properties = {
                     unsafe {
@@ -294,7 +307,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     .unwrap()
                     .1;
                 let reqs = dev.raw_device().get_image_memory_requirements(image);
-                println!("reqs: {reqs:?}");
+                info!("reqs: {reqs:?}");
                 let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
                 let alloc_info = vk::MemoryAllocateInfo::default()
                     .allocation_size(reqs.size)
@@ -302,7 +315,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     .push_next(&mut external_fd_info)
                     .push_next(&mut dedicated);
                 let mem = dev.raw_device().allocate_memory(&alloc_info, None).unwrap();
-                println!("test");
+                info!("test");
                 // let info = vk::BindImageMemoryInfo::default().image(image).memory(mem);
                 dev.raw_device().bind_image_memory(image, mem, 0).unwrap();
 

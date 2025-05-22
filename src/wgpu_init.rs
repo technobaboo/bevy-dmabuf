@@ -21,7 +21,7 @@ impl Plugin for DmabufWgpuInitPlugin {
                 RenderInstance(Arc::new(WgpuWrapper::new(instance))),
             )),
             synchronous_pipeline_compilation: false,
-            debug_flags: default(),
+            debug_flags: RenderDebugFlags::all(),
         });
     }
 }
@@ -31,7 +31,7 @@ use std::sync::Arc;
 use ash::vk::PhysicalDeviceType;
 use bevy::app::{Plugin, PluginGroup, PluginGroupBuilder};
 use bevy::log::debug;
-use bevy::render::RenderPlugin;
+use bevy::render::{RenderDebugFlags, RenderPlugin};
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderInstance, RenderQueue, WgpuWrapper,
 };
@@ -275,6 +275,7 @@ pub(crate) fn vulkan_to_wgpu(format: ash::vk::Format) -> Option<wgpu::TextureFor
         F::B8G8R8A8_SRGB => Tf::Bgra8UnormSrgb,
         F::R8G8B8A8_SNORM => Tf::Rgba8Snorm,
         F::B8G8R8A8_UNORM => Tf::Bgra8Unorm,
+        F::B8G8R8A8_UINT => Tf::Bgra8Unorm,
         F::R8G8B8A8_UINT => Tf::Rgba8Uint,
         F::R8G8B8A8_SINT => Tf::Rgba8Sint,
         F::A2B10G10R10_UINT_PACK32 => Tf::Rgb10a2Uint,

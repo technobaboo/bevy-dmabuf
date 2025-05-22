@@ -2278,12 +2278,12 @@ dependencies = [
 name = "example_usages"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "bevy",
  "bevy-dmabuf",
  "color-eyre",
  "drm-fourcc",
  "tokio",
- "vulkano",
  "wlx-capture",
  "zbus",
 ]

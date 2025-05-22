@@ -11,6 +11,7 @@ wlx-capture = { git = "https://github.com/galister/wlx-capture", features = [
 bevy-dmabuf.path = ".."
 bevy = { version = "0.16", features = ["wayland", "trace_tracy"] }
 color-eyre = "0.6.3"
-vulkano = "0.35.1"
+# vulkano = "0.35.1"
 tokio = { version = "1", features = ["full"] }
 drm-fourcc = "2.2.0"
+ash = "0.38.0"
