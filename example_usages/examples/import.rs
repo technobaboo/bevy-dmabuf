@@ -65,10 +65,10 @@ fn update_buf(
     if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
         if let Some((handle, mat_handle)) = handle.as_ref().map(|v| &v.0) {
             materials.get_mut(mat_handle);
-            drop_buf(bufs.replace(handle.clone(), buf));
+            bufs.set(handle.clone(), buf);
         } else {
             let handle = get_handle(&mut images, &buf).unwrap();
-            drop_buf(bufs.replace(handle.clone(), buf));
+            bufs.set(handle.clone(), buf);
             let mat_handle = materials.add(StandardMaterial {
                 base_color_texture: Some(handle.clone()),
                 ..default()
@@ -108,14 +108,6 @@ fn setup(
         Camera3d::default(),
         Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-}
-
-fn drop_buf(buf: Option<DmabufBuffer>) {
-    if let Some(buf) = buf {
-        buf.planes
-            .into_iter()
-            .for_each(|p| std::mem::forget(p.dmabuf_fd));
-    }
 }
 
 #[derive(Resource)]

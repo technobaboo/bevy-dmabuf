@@ -5,9 +5,8 @@ use bevy_dmabuf::{
 };
 use std::{
     ffi::{CStr, c_char},
-    os::fd::{self, FromRawFd, RawFd},
+    os::fd::{self, FromRawFd},
 };
-use zbus::zvariant::OwnedFd;
 
 use example_usages::TestInterfaceProxy;
 
@@ -26,19 +25,19 @@ async fn main() {
         },
     );
     write_clear_color(&vk, &image, [127, 255, 255, 255]);
-    let planes =
-        get_planes(&image).map(|r| unsafe { vk.dev.get_image_subresource_layout(image.image, r) });
-    println!("fd: {}", image.fd);
+    let planes = get_planes(&image)
+        .map(|r| unsafe { vk.dev.get_image_subresource_layout(image.image, r) })
+        .map(|p| DmabufPlane {
+            // dmabuf_fd: image.fd.into(),
+            offset: p.offset as u32,
+            stride: p.row_pitch as i32,
+        })
+        .collect();
+    println!("fd: {:?}", image.fd);
     proxy
         .dmabuf(DmabufBuffer {
-            planes: planes
-                .map(|p| DmabufPlane {
-                    // dmabuf_fd: image.fd.into(),
-                    dmabuf_fd: unsafe { OwnedFd::from(fd::OwnedFd::from_raw_fd(image.fd)) },
-                    offset: p.offset as u32,
-                    stride: p.row_pitch as i32,
-                })
-                .collect(),
+            dmabuf_fd: image.fd.try_clone().unwrap().into(),
+            planes,
             res: bevy_dmabuf::dmabuf::Resolution { x: 512, y: 512 },
             modifier: image.modifier,
             format: bevy_dmabuf::format_mapping::vk_format_to_drm_fourcc(vk::Format::R8G8B8A8_UNORM)
@@ -78,7 +77,7 @@ fn write_clear_color(vk: &VulkanInfo, image: &ExportedImage, color: [u32; 4]) {
             .unwrap();
         vk.dev.begin_command_buffer(buffer, &begin_info).unwrap();
         let plane_ranges = get_planes(image)
-            .map(|v| vk::ImageSubresourceRange {
+            .map(|_| vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 base_mip_level: 0,
                 level_count: 1,
@@ -186,7 +185,7 @@ fn create_exportable_image(
     ExportedImage {
         image,
         memory: mem,
-        fd,
+        fd: unsafe { fd::OwnedFd::from_raw_fd(fd) },
         modifier: drm_modifier,
         device: vk.dev.clone(),
         planes: drm_format_properties
@@ -200,7 +199,7 @@ fn create_exportable_image(
 struct ExportedImage {
     image: vk::Image,
     memory: vk::DeviceMemory,
-    fd: RawFd,
+    fd: fd::OwnedFd,
     modifier: u64,
     planes: u32,
     device: Device,

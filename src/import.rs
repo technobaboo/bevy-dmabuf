@@ -1,5 +1,6 @@
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 use std::{
-    os::fd::{AsFd, AsRawFd},
+    os::fd::{IntoRawFd as _, OwnedFd},
     sync::{Arc, Mutex},
 };
 
@@ -19,6 +20,7 @@ use bevy::{
         RenderApp, RenderSet,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::{RenderAssetDependency as _, RenderAssets},
+        render_resource::{Texture, TextureView},
         renderer::RenderDevice,
         texture::GpuImage,
     },
@@ -51,17 +53,21 @@ impl Plugin for DmabufImportPlugin {
         }
     }
 }
-#[expect(clippy::type_complexity)]
 #[derive(Resource, Clone, ExtractResource)]
-pub struct ImportedDmabufs(Arc<Mutex<HashMap<Handle<Image>, (DmabufBuffer, bool)>>>);
+pub struct ImportedDmabufs(Arc<Mutex<HashMap<Handle<Image>, BufImage>>>);
+
+enum BufImage {
+    UnImported(DmabufBuffer),
+    Imported(ImportedTexture),
+}
 
 impl ImportedDmabufs {
-    pub fn replace(&self, handle: Handle<Image>, buf: DmabufBuffer) -> Option<DmabufBuffer> {
+    pub fn set(&self, handle: Handle<Image>, buf: DmabufBuffer) {
+        #[expect(clippy::unwrap_used)]
         self.0
             .lock()
             .unwrap()
-            .insert(handle, (buf, false))
-            .map(|(b, _)| b)
+            .insert(handle, BufImage::UnImported(buf));
     }
 }
 
@@ -70,36 +76,36 @@ fn do_stuff(
     imported: Res<ImportedDmabufs>,
     device: Res<RenderDevice>,
 ) {
-    for (handle, (buf, handled)) in imported.0.lock().unwrap().iter_mut() {
-        if !*handled {
-            match import_texture(&device, buf) {
-                Ok(tex) => {
-                    let Some(render_tex) = render_asset.get_mut(handle) else {
-                        warn!("invalid texture handle");
+    #[expect(clippy::unwrap_used)]
+    let mut imported = imported.0.lock().unwrap();
+    let handles = imported.keys().cloned().collect::<Vec<_>>();
+    for handle in handles {
+        // let mut replace_image = Option::<(TextureView, Texture)>::None;
+        if matches!(imported.get(&handle), Some(BufImage::UnImported(_))) {
+            if let Some(BufImage::UnImported(dmabuf)) = imported.remove(&handle) {
+                match import_texture(&device, dmabuf) {
+                    Ok(tex) => {
+                        imported.insert(handle.clone(), BufImage::Imported(tex));
+                    }
+                    Err(err) => {
+                        error!("failed to import dmabuf: {err}");
                         continue;
-                    };
-                    render_tex.texture_view = tex
-                        .create_view(&TextureViewDescriptor {
-                            label: None,
-                            format: Some(tex.format()),
-                            dimension: Some(wgpu::TextureViewDimension::D2),
-                            usage: Some(tex.usage()),
-                            aspect: wgpu::TextureAspect::All,
-                            base_mip_level: 0,
-                            mip_level_count: Some(tex.mip_level_count()),
-                            base_array_layer: 0,
-                            array_layer_count: Some(tex.depth_or_array_layers()),
-                        })
-                        .into();
-                    render_tex.size = tex.size();
-                    render_tex.mip_level_count = tex.mip_level_count();
-                    render_tex.texture = tex.into();
-                }
-                Err(err) => {
-                    error!("failed to import dmabuf: {err}");
+                    }
                 }
             }
-            *handled = true;
+        }
+        let Some(render_tex) = render_asset.get_mut(&handle) else {
+            warn!("invalid texture handle");
+            continue;
+        };
+
+        if let Some(BufImage::Imported(tex)) = imported.get(&handle) {
+            render_tex.texture_view = tex.texture_view.clone();
+            render_tex.size = tex.texture.size();
+            render_tex.mip_level_count = tex.texture.mip_level_count();
+            render_tex.texture = tex.texture.clone();
+        } else {
+            error!("unreachable");
         }
     }
 }
@@ -120,21 +126,33 @@ pub fn get_handle(
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum ImportError {
-    #[error("Format is not compatible with vulkan")]
-    FormatInvalid,
+    #[error("Format is not compatible with Vulkan")]
+    VulkanIncompatibleFormat,
+    #[error("Format is not compatible with Wgpu")]
+    WgpuIncompatibleFormat,
     #[error("Unsupported Modifier for Format")]
     ModifierInvalid,
-    #[error("Unable to create vulkan image: {0}")]
-    VulkanImageCreationFailed(#[from] vk::Result),
+    #[error("Unable to create Vulkan Image: {0}")]
+    VulkanImageCreationFailed(vk::Result),
     #[error("Unrecognized Fourcc/Format")]
     UnrecognizedFourcc(#[from] drm_fourcc::UnrecognizedFourcc),
+    #[error("RenderDevice is not a Vulkan Device")]
+    NotVulkan,
+    #[error("Unable to find valid Gpu Memory type index")]
+    NoValidMemoryTypes,
+    #[error("Unable to allocate Vulkan Gpu Memory: {0}")]
+    VulkanMemoryAllocFailed(vk::Result),
+    #[error("Unable to bind Vulkan Gpu Memory to Vulkan Image: {0}")]
+    VulkanImageMemoryBindFailed(vk::Result),
 }
 
-fn get_imported_descriptor(buf: &DmabufBuffer) -> Result<wgpu::TextureDescriptor, ImportError> {
+fn get_imported_descriptor(
+    buf: &DmabufBuffer,
+) -> Result<wgpu::TextureDescriptor<'static>, ImportError> {
     let vulkan_format = drm_fourcc_to_vk_format(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
-    .ok_or(ImportError::FormatInvalid)?;
+    .ok_or(ImportError::VulkanIncompatibleFormat)?;
     info!("{vulkan_format:?}");
     Ok(wgpu::TextureDescriptor {
         label: None,
@@ -146,7 +164,7 @@ fn get_imported_descriptor(buf: &DmabufBuffer) -> Result<wgpu::TextureDescriptor
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: vulkan_to_wgpu(vulkan_format).unwrap(), /* .ok_or(ImportError::FormatInvalid)? */
+        format: vulkan_to_wgpu(vulkan_format).ok_or(ImportError::WgpuIncompatibleFormat)?,
         usage: TextureUsages::RENDER_ATTACHMENT
             | TextureUsages::TEXTURE_BINDING
             | TextureUsages::COPY_SRC
@@ -155,32 +173,32 @@ fn get_imported_descriptor(buf: &DmabufBuffer) -> Result<wgpu::TextureDescriptor
     })
 }
 
+pub struct ImportedTexture {
+    texture: Texture,
+    texture_view: TextureView,
+}
+
 #[tracing::instrument(level = "debug", skip(device))]
-fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Texture, ImportError> {
+fn import_texture(
+    device: &RenderDevice,
+    buf: DmabufBuffer,
+) -> Result<ImportedTexture, ImportError> {
     let vulkan_format = drm_fourcc_to_vk_format(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
-    .ok_or(ImportError::FormatInvalid)?;
-    let (image, _mem) = unsafe {
+    .ok_or(ImportError::VulkanIncompatibleFormat)?;
+    let wgpu_desc = get_imported_descriptor(&buf)?;
+    let (image, mem) = unsafe {
         device
             .wgpu_device()
             .as_hal::<Vulkan, _, _>(|dev| -> Result<_, ImportError> {
-                let dev = dev.unwrap();
-                // let mem_properties = {
-                //     dev.shared_instance()
-                //         .raw_instance()
-                //         .get_physical_device_memory_properties(dev.raw_physical_device())
-                // };
-                // let drm_modifier_dev = image_drm_format_modifier::Device::new(
-                //     dev.shared_instance().raw_instance(),
-                //     dev.raw_device(),
-                // );
-                let (format_properties, drm_format_properties) = get_drm_modifiers(
+                let dev = dev.ok_or(ImportError::NotVulkan)?;
+                let (_format_properties, drm_format_properties) = get_drm_modifiers(
                     dev.shared_instance().raw_instance(),
                     dev.raw_physical_device(),
                     vulkan_format,
                 );
-                let used_modifier = drm_format_properties
+                let _used_modifier = drm_format_properties
                     .iter()
                     .inspect(|v| {
                         info!("{v:?}");
@@ -194,7 +212,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::TRANSFER_DST;
                 let create_flags = vk::ImageCreateFlags::empty();
-                let format_info = get_drm_image_modifier_info(
+                let _format_info = get_drm_image_modifier_info(
                     dev.shared_instance().raw_instance(),
                     dev.raw_physical_device(),
                     vulkan_format,
@@ -203,13 +221,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     create_flags,
                     buf.modifier,
                 )
-                .unwrap();
-                // .ok_or(ImportError::ModifierInvalid)?;
-
-                // used_modifier.drm_format_modifier_tiling_features
-
-                // let plane_layouts = &[vk::SubresourceLayout]
-
+                .ok_or(ImportError::ModifierInvalid);
                 let plane_layouts = buf
                     .planes
                     .iter()
@@ -233,8 +245,6 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                 });
                 let mut external_memory_info = vk::ExternalMemoryImageCreateInfo::default()
                     .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
-
-                // let mut external_fd_mem = vk::ImportMemoryFdInfoKHR::default().fd(buf.)
 
                 let mut image_create_info = vk::ImageCreateInfo::default()
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -267,18 +277,16 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     )
                     .map_err(ImportError::VulkanImageCreationFailed)?;
 
-                let fd = buf.planes.first().unwrap().dmabuf_fd.as_raw_fd();
+                let fd = OwnedFd::from(buf.dmabuf_fd).into_raw_fd();
                 info!(fd);
                 let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
                     .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
                     .fd(fd);
 
                 let mem_properties = {
-                    unsafe {
-                        dev.shared_instance()
-                            .raw_instance()
-                            .get_physical_device_memory_properties(dev.raw_physical_device())
-                    }
+                    dev.shared_instance()
+                        .raw_instance()
+                        .get_physical_device_memory_properties(dev.raw_physical_device())
                 };
                 let memory_types = &mem_properties.memory_types_as_slice();
                 let valid_memory_types =
@@ -304,7 +312,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                         t.property_flags
                             .intersects(vk::MemoryPropertyFlags::from_raw(valid_memory_types))
                     })
-                    .unwrap()
+                    .ok_or(ImportError::NoValidMemoryTypes)?
                     .1;
                 let reqs = dev.raw_device().get_image_memory_requirements(image);
                 info!("reqs: {reqs:?}");
@@ -314,10 +322,15 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
                     .memory_type_index(index)
                     .push_next(&mut external_fd_info)
                     .push_next(&mut dedicated);
-                let mem = dev.raw_device().allocate_memory(&alloc_info, None).unwrap();
+                let mem = dev
+                    .raw_device()
+                    .allocate_memory(&alloc_info, None)
+                    .map_err(ImportError::VulkanMemoryAllocFailed)?;
                 info!("test");
                 // let info = vk::BindImageMemoryInfo::default().image(image).memory(mem);
-                dev.raw_device().bind_image_memory(image, mem, 0).unwrap();
+                dev.raw_device()
+                    .bind_image_memory(image, mem, 0)
+                    .map_err(ImportError::VulkanImageMemoryBindFailed)?;
 
                 Ok((image, mem))
             })
@@ -332,7 +345,7 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: vulkan_to_wgpu(vulkan_format).unwrap(),
+        format: vulkan_to_wgpu(vulkan_format).ok_or(ImportError::WgpuIncompatibleFormat)?,
         usage: TextureUses::COLOR_TARGET | TextureUses::PRESENT,
         memory_flags: MemoryFlags::empty(),
         view_formats: vec![],
@@ -341,15 +354,38 @@ fn import_texture(device: &RenderDevice, buf: &DmabufBuffer) -> Result<wgpu::Tex
         wgpu::hal::vulkan::Device::texture_from_raw(
             image,
             &descriptor,
-            Some(Box::new(move || {
-                // TODO: setup cleanup stuff
-            })),
+            Some({
+                let dev = device.clone();
+                Box::new(move || {
+                    dev.wgpu_device().as_hal::<Vulkan, _, _>(move |dev| {
+                        if let Some(dev) = dev {
+                            dev.raw_device().free_memory(mem, None);
+                            dev.raw_device().destroy_image(image, None);
+                        }
+                    });
+                })
+            }),
         )
     };
-    let wgpu_desc = get_imported_descriptor(buf).unwrap();
-    unsafe {
-        Ok(device
+    let wgpu_texture = unsafe {
+        device
             .wgpu_device()
-            .create_texture_from_hal::<Vulkan>(texture, &wgpu_desc))
-    }
+            .create_texture_from_hal::<Vulkan>(texture, &wgpu_desc)
+    };
+    let texture = Texture::from(wgpu_texture);
+    let texture_view = texture.create_view(&TextureViewDescriptor {
+        label: None,
+        format: Some(texture.format()),
+        dimension: Some(wgpu::TextureViewDimension::D2),
+        usage: Some(texture.usage()),
+        aspect: wgpu::TextureAspect::All,
+        base_mip_level: 0,
+        mip_level_count: Some(texture.mip_level_count()),
+        base_array_layer: 0,
+        array_layer_count: Some(texture.depth_or_array_layers()),
+    });
+    Ok(ImportedTexture {
+        texture,
+        texture_view,
+    })
 }
