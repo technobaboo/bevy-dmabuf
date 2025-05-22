@@ -1,7 +1,7 @@
 use std::os::fd::{AsRawFd, RawFd};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use zbus::zvariant;
+use zbus::zvariant::{self, OwnedFd};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, zvariant::Type)]
 pub struct DmabufBuffer {
@@ -20,7 +20,7 @@ pub struct Resolution {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, zvariant::Type)]
 pub struct DmabufPlane {
-    pub dmabuf_fd: ZbusRawFd,
+    pub dmabuf_fd: OwnedFd,
     // plane_id: u32,
     pub offset: u32,
     pub stride: i32,

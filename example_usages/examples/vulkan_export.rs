@@ -5,8 +5,9 @@ use bevy_dmabuf::{
 };
 use std::{
     ffi::{CStr, c_char},
-    os::fd::RawFd,
+    os::fd::{self, FromRawFd, RawFd},
 };
+use zbus::zvariant::OwnedFd;
 
 use example_usages::TestInterfaceProxy;
 
@@ -32,7 +33,8 @@ async fn main() {
         .dmabuf(DmabufBuffer {
             planes: planes
                 .map(|p| DmabufPlane {
-                    dmabuf_fd: image.fd.into(),
+                    // dmabuf_fd: image.fd.into(),
+                    dmabuf_fd: unsafe { OwnedFd::from(fd::OwnedFd::from_raw_fd(image.fd)) },
                     offset: p.offset as u32,
                     stride: p.row_pitch as i32,
                 })

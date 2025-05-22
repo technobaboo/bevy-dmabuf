@@ -112,7 +112,7 @@ pub fn get_handle(
     Ok(images.add(Image::new_fill(
         desc.size,
         desc.dimension,
-        &[255, 0, 255, 255],
+        &[255, 255, 255, 255],
         desc.format,
         RenderAssetUsages::RENDER_WORLD,
     )))
