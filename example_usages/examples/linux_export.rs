@@ -1,7 +1,12 @@
-use std::os::fd::FromRawFd;
+use std::{
+    os::fd::{FromRawFd, OwnedFd},
+    sync::Arc,
+    time::Duration,
+};
 
 use bevy_dmabuf::dmabuf::{DmabufBuffer, DmabufPlane};
 use example_usages::TestInterfaceProxy;
+use tokio::{sync::Notify, time::timeout};
 use wlx_capture::{
     WlxCapture,
     frame::{Transform, WlxFrame},
@@ -17,24 +22,27 @@ async fn main() {
     let mut wlx_capture = wlr_dmabuf::WlrDmabufCapture::<_, _>::new(wlx_client, output_id);
     let conn = zbus::connection::Connection::session().await.unwrap();
     let proxy = TestInterfaceProxy::builder(&conn).build().await.unwrap();
-    wlx_capture.init(&[], (), |_, frame| {
+    let notify = Arc::new(Notify::new());
+    wlx_capture.init(&[], notify.clone(), |notify, frame| {
+        notify.notify_waiters();
         match &frame {
-            WlxFrame::Dmabuf(dmabuf_frame) => println!("dmabuf"),
-            WlxFrame::MemFd(mem_fd_frame) => println!("mem_fd"),
-            WlxFrame::MemPtr(mem_ptr_frame) => println!("mem_ptr"),
+            WlxFrame::Dmabuf(_) => println!("dmabuf"),
+            WlxFrame::MemFd(_) => println!("mem_fd"),
+            WlxFrame::MemPtr(_) => println!("mem_ptr"),
         }
 
         if let WlxFrame::Dmabuf(dmabuf) = frame {
             return Some(DmabufBuffer {
+                dmabuf_fd: unsafe {
+                    OwnedFd::from_raw_fd(dmabuf.planes.first().unwrap().fd.unwrap()).into()
+                },
                 planes: dmabuf
                     .planes
                     .iter()
-                    .filter_map(|plane| {
-                        Some(DmabufPlane {
-                            dmabuf_fd: plane.fd.map(|fd| fd.into())?,
-                            offset: plane.offset,
-                            stride: plane.stride,
-                        })
+                    .filter(|p| p.fd.is_some())
+                    .map(|plane| DmabufPlane {
+                        offset: plane.offset,
+                        stride: plane.stride,
                     })
                     .collect(),
                 res: bevy_dmabuf::dmabuf::Resolution {
@@ -51,6 +59,7 @@ async fn main() {
     println!("resume");
     loop {
         wlx_capture.request_new_frame();
+        _ = timeout(Duration::from_millis(250), notify.notified()).await;
         if let Some(event) = wlx_capture.receive() {
             println!("frame!");
             _ = proxy.dmabuf(event).await;
