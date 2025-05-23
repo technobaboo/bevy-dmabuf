@@ -1,7 +1,7 @@
 use ash::{Device, Entry, Instance, vk};
 use bevy_dmabuf::{
-    dmabuf::{DmabufBuffer, DmabufPlane},
-    format_mapping::get_drm_modifiers,
+    dmatex::{Dmatex, DmatexPlane, Resolution},
+    format_mapping::{get_drm_modifiers, vk_format_to_drm_fourcc},
 };
 use std::{
     ffi::{CStr, c_char},
@@ -27,21 +27,19 @@ async fn main() {
     write_clear_color(&vk, &image, [127, 255, 255, 255]);
     let planes = get_planes(&image)
         .map(|r| unsafe { vk.dev.get_image_subresource_layout(image.image, r) })
-        .map(|p| DmabufPlane {
-            // dmabuf_fd: image.fd.into(),
+        .map(|p| DmatexPlane {
             offset: p.offset as u32,
             stride: p.row_pitch as i32,
         })
         .collect();
     println!("fd: {:?}", image.fd);
     proxy
-        .dmabuf(DmabufBuffer {
+        .dmatex(Dmatex {
             dmabuf_fd: image.fd.try_clone().unwrap().into(),
             planes,
-            res: bevy_dmabuf::dmabuf::Resolution { x: 512, y: 512 },
+            res: Resolution { x: 512, y: 512 },
             modifier: image.modifier,
-            format: bevy_dmabuf::format_mapping::vk_format_to_drm_fourcc(vk::Format::R8G8B8A8_UNORM)
-                .unwrap() as u32,
+            format: vk_format_to_drm_fourcc(vk::Format::R8G8B8A8_UNORM).unwrap() as u32,
             flip_y: false,
         })
         .await

@@ -1,26 +1,19 @@
 use std::sync::mpsc;
 
-use bevy_dmabuf::dmabuf::DmabufBuffer;
+use bevy_dmabuf::dmatex::Dmatex;
 pub struct TestInterface {
-    pub dmabuf_channel: mpsc::Sender<DmabufBuffer>,
+    pub dmatex_channel: mpsc::Sender<Dmatex>,
 }
 
-fn test(proxy: zbus::Proxy) {
-
-
-}
 #[zbus::interface(
-    name = "dev.schmarni.bevy_dmabuf.example",
+    name = "dev.schmarni.bevy_dmabuf.dmatex",
     proxy(
-        default_service = "dev.schmarni.bevy_dmabuf.example",
-        default_path = "/dev/schmarni/bevy_dmabuf"
+        default_service = "dev.schmarni.bevy_dmabuf.dmatex",
+        default_path = "/dev/schmarni/bevy_dmabuf/dmatex"
     )
 )]
 impl TestInterface {
-    fn dmabuf(&self, dmabuf: DmabufBuffer) {
-        _ = self.dmabuf_channel.send(dmabuf);
+    fn dmatex(&self, dmabuf: Dmatex) {
+        _ = self.dmatex_channel.send(dmabuf);
     }
-    // fn semaphore(&self) -> Fd {
-    //     Fd::Borrowed(self.semaphore.as_fd())
-    // }
 }

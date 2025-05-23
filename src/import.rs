@@ -14,7 +14,7 @@ use bevy::{
         system::{Res, ResMut},
     },
     image::Image,
-    log::{error, info, tracing, warn},
+    log::{error, tracing, warn},
     platform::collections::HashMap,
     render::{
         RenderApp, RenderSet,
@@ -34,7 +34,7 @@ use wgpu::{
 };
 
 use crate::{
-    dmabuf::DmabufBuffer,
+    dmatex::Dmatex,
     format_mapping::{drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers},
     wgpu_init::vulkan_to_wgpu,
 };
@@ -43,9 +43,9 @@ pub struct DmabufImportPlugin;
 
 impl Plugin for DmabufImportPlugin {
     fn build(&self, app: &mut bevy::app::App) {
-        let handles = ImportedDmabufs(default());
+        let handles = ImportedDmatexs(default());
         app.insert_resource(handles.clone());
-        app.add_plugins(ExtractResourcePlugin::<ImportedDmabufs>::default());
+        app.add_plugins(ExtractResourcePlugin::<ImportedDmatexs>::default());
         if let Some(renderapp) = app.get_sub_app_mut(RenderApp) {
             GpuImage::register_system(renderapp, do_stuff.in_set(RenderSet::PrepareAssets));
         } else {
@@ -53,39 +53,50 @@ impl Plugin for DmabufImportPlugin {
         }
     }
 }
-#[derive(Resource, Clone, ExtractResource)]
-pub struct ImportedDmabufs(Arc<Mutex<HashMap<Handle<Image>, BufImage>>>);
 
-enum BufImage {
-    UnImported(DmabufBuffer),
+#[derive(Resource, Clone, ExtractResource)]
+pub struct ImportedDmatexs(Arc<Mutex<HashMap<Handle<Image>, DmaImage>>>);
+
+enum DmaImage {
+    UnImported(Dmatex),
     Imported(ImportedTexture),
 }
 
-impl ImportedDmabufs {
-    pub fn set(&self, handle: Handle<Image>, buf: DmabufBuffer) {
+impl ImportedDmatexs {
+    pub fn set(
+        &self,
+        images: &mut Assets<Image>,
+        buf: Dmatex,
+    ) -> Result<Handle<Image>, ImportError> {
+        let handle = get_handle(images, &buf)?;
         #[expect(clippy::unwrap_used)]
         self.0
             .lock()
             .unwrap()
-            .insert(handle, BufImage::UnImported(buf));
+            .insert(handle.clone_weak(), DmaImage::UnImported(buf));
+        Ok(handle)
     }
 }
 
 fn do_stuff(
-    mut render_asset: ResMut<RenderAssets<GpuImage>>,
-    imported: Res<ImportedDmabufs>,
+    mut gpu_images: ResMut<RenderAssets<GpuImage>>,
+    imported: Res<ImportedDmatexs>,
     device: Res<RenderDevice>,
 ) {
     #[expect(clippy::unwrap_used)]
     let mut imported = imported.0.lock().unwrap();
     let handles = imported.keys().cloned().collect::<Vec<_>>();
     for handle in handles {
-        // let mut replace_image = Option::<(TextureView, Texture)>::None;
-        if matches!(imported.get(&handle), Some(BufImage::UnImported(_))) {
-            if let Some(BufImage::UnImported(dmabuf)) = imported.remove(&handle) {
+        // filter out outdated dmatexs
+        if gpu_images.get(&handle).is_none() {
+            imported.remove(&handle);
+            continue;
+        }
+        if matches!(imported.get(&handle), Some(DmaImage::UnImported(_))) {
+            if let Some(DmaImage::UnImported(dmabuf)) = imported.remove(&handle) {
                 match import_texture(&device, dmabuf) {
                     Ok(tex) => {
-                        imported.insert(handle.clone(), BufImage::Imported(tex));
+                        imported.insert(handle.clone(), DmaImage::Imported(tex));
                     }
                     Err(err) => {
                         error!("failed to import dmabuf: {err}");
@@ -94,12 +105,12 @@ fn do_stuff(
                 }
             }
         }
-        let Some(render_tex) = render_asset.get_mut(&handle) else {
-            warn!("invalid texture handle");
+        let Some(render_tex) = gpu_images.get_mut(&handle) else {
+            warn!("invalid texture handle (unreachable)");
             continue;
         };
 
-        if let Some(BufImage::Imported(tex)) = imported.get(&handle) {
+        if let Some(DmaImage::Imported(tex)) = imported.get(&handle) {
             render_tex.texture_view = tex.texture_view.clone();
             render_tex.size = tex.texture.size();
             render_tex.mip_level_count = tex.texture.mip_level_count();
@@ -110,10 +121,7 @@ fn do_stuff(
     }
 }
 
-pub fn get_handle(
-    images: &mut Assets<Image>,
-    buf: &DmabufBuffer,
-) -> Result<Handle<Image>, ImportError> {
+fn get_handle(images: &mut Assets<Image>, buf: &Dmatex) -> Result<Handle<Image>, ImportError> {
     let desc = get_imported_descriptor(buf)?;
     Ok(images.add(Image::new_fill(
         desc.size,
@@ -146,14 +154,11 @@ pub enum ImportError {
     VulkanImageMemoryBindFailed(vk::Result),
 }
 
-fn get_imported_descriptor(
-    buf: &DmabufBuffer,
-) -> Result<wgpu::TextureDescriptor<'static>, ImportError> {
+fn get_imported_descriptor(buf: &Dmatex) -> Result<wgpu::TextureDescriptor<'static>, ImportError> {
     let vulkan_format = drm_fourcc_to_vk_format(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
     .ok_or(ImportError::VulkanIncompatibleFormat)?;
-    info!("{vulkan_format:?}");
     Ok(wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -179,10 +184,7 @@ pub struct ImportedTexture {
 }
 
 #[tracing::instrument(level = "debug", skip(device))]
-fn import_texture(
-    device: &RenderDevice,
-    buf: DmabufBuffer,
-) -> Result<ImportedTexture, ImportError> {
+fn import_texture(device: &RenderDevice, buf: Dmatex) -> Result<ImportedTexture, ImportError> {
     let vulkan_format = drm_fourcc_to_vk_format(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
@@ -200,9 +202,6 @@ fn import_texture(
                 );
                 let _used_modifier = drm_format_properties
                     .iter()
-                    .inspect(|v| {
-                        info!("{v:?}");
-                    })
                     .find(|v| v.drm_format_modifier == buf.modifier)
                     .ok_or(ImportError::ModifierInvalid)?;
 
@@ -278,7 +277,6 @@ fn import_texture(
                     .map_err(ImportError::VulkanImageCreationFailed)?;
 
                 let fd = OwnedFd::from(buf.dmabuf_fd).into_raw_fd();
-                info!(fd);
                 let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
                     .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
                     .fd(fd);
@@ -315,7 +313,6 @@ fn import_texture(
                     .ok_or(ImportError::NoValidMemoryTypes)?
                     .1;
                 let reqs = dev.raw_device().get_image_memory_requirements(image);
-                info!("reqs: {reqs:?}");
                 let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
                 let alloc_info = vk::MemoryAllocateInfo::default()
                     .allocation_size(reqs.size)
@@ -326,7 +323,6 @@ fn import_texture(
                     .raw_device()
                     .allocate_memory(&alloc_info, None)
                     .map_err(ImportError::VulkanMemoryAllocFailed)?;
-                info!("test");
                 // let info = vk::BindImageMemoryInfo::default().image(image).memory(mem);
                 dev.raw_device()
                     .bind_image_memory(image, mem, 0)

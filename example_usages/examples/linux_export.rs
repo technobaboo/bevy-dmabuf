@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use bevy_dmabuf::dmabuf::{DmabufBuffer, DmabufPlane};
+use bevy_dmabuf::dmatex::{Dmatex, DmatexPlane, Resolution};
 use example_usages::TestInterfaceProxy;
 use tokio::{sync::Notify, time::timeout};
 use wlx_capture::{
@@ -32,7 +32,7 @@ async fn main() {
         }
 
         if let WlxFrame::Dmabuf(dmabuf) = frame {
-            return Some(DmabufBuffer {
+            return Some(Dmatex {
                 dmabuf_fd: unsafe {
                     OwnedFd::from_raw_fd(dmabuf.planes.first().unwrap().fd.unwrap()).into()
                 },
@@ -40,12 +40,12 @@ async fn main() {
                     .planes
                     .iter()
                     .filter(|p| p.fd.is_some())
-                    .map(|plane| DmabufPlane {
+                    .map(|plane| DmatexPlane {
                         offset: plane.offset,
                         stride: plane.stride,
                     })
                     .collect(),
-                res: bevy_dmabuf::dmabuf::Resolution {
+                res: Resolution {
                     x: dmabuf.format.width,
                     y: dmabuf.format.height,
                 },
@@ -56,13 +56,11 @@ async fn main() {
         }
         None
     });
-    println!("resume");
     loop {
         wlx_capture.request_new_frame();
         _ = timeout(Duration::from_millis(250), notify.notified()).await;
         if let Some(event) = wlx_capture.receive() {
-            println!("frame!");
-            _ = proxy.dmabuf(event).await;
+            _ = proxy.dmatex(event).await;
         }
     }
 }
