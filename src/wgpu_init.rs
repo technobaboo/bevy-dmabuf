@@ -31,11 +31,11 @@ use std::sync::Arc;
 use ash::vk::PhysicalDeviceType;
 use bevy::app::{Plugin, PluginGroup, PluginGroupBuilder};
 use bevy::log::debug;
-use bevy::render::{RenderDebugFlags, RenderPlugin};
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderInstance, RenderQueue, WgpuWrapper,
 };
 use bevy::render::settings::{RenderCreation, RenderResources};
+use bevy::render::{RenderDebugFlags, RenderPlugin};
 use color_eyre::eyre::bail;
 use wgpu::hal::Api;
 use wgpu::hal::api::Vulkan;
@@ -54,14 +54,15 @@ fn init_graphics() -> color_eyre::Result<(
 )> {
     let vk_entry = unsafe { ash::Entry::load() }?;
     let flags = wgpu::InstanceFlags::default().with_env();
-    let mut extensions =
+    let mut instance_extensions =
         <Vulkan as Api>::Instance::desired_extensions(&vk_entry, VK_TARGET_VERSION_ASH, flags)?;
-    extensions.dedup();
+    instance_extensions.dedup();
     let device_extensions = [
         // ash::khr::external_semaphore_fd::NAME,
         ash::ext::image_drm_format_modifier::NAME,
         ash::ext::external_memory_dma_buf::NAME,
         ash::khr::external_memory_fd::NAME,
+        ash::khr::external_memory::NAME,
         ash::khr::swapchain::NAME,
         // #[cfg(target_os = "android")]
         ash::khr::draw_indirect_count::NAME,
@@ -75,7 +76,7 @@ fn init_graphics() -> color_eyre::Result<(
     ];
 
     let vk_instance = unsafe {
-        let extensions_cchar: Vec<_> = extensions.iter().map(|s| s.as_ptr()).collect();
+        let extensions_cchar: Vec<_> = instance_extensions.iter().map(|s| s.as_ptr()).collect();
 
         let app_name = c"bevy app";
         let vk_app_info = ash::vk::ApplicationInfo::default()
@@ -143,7 +144,7 @@ fn init_graphics() -> color_eyre::Result<(
             instance_api_version,
             android_sdk_version,
             None,
-            extensions,
+            instance_extensions,
             flags,
             has_nv_optimus,
             None,

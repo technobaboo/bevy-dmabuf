@@ -14,12 +14,13 @@ use bevy::{
         system::{Res, ResMut},
     },
     image::Image,
-    log::{error, tracing, warn},
+    log::{error, info, tracing, warn},
+    pbr::{PreparedMaterial, StandardMaterial},
     platform::collections::HashMap,
     render::{
         RenderApp, RenderSet,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
-        render_asset::{RenderAssetDependency as _, RenderAssets},
+        render_asset::{RenderAssetDependency as _, RenderAssets, prepare_assets},
         render_resource::{Texture, TextureView},
         renderer::RenderDevice,
         texture::GpuImage,
@@ -47,7 +48,12 @@ impl Plugin for DmabufImportPlugin {
         app.insert_resource(handles.clone());
         app.add_plugins(ExtractResourcePlugin::<ImportedDmatexs>::default());
         if let Some(renderapp) = app.get_sub_app_mut(RenderApp) {
-            GpuImage::register_system(renderapp, do_stuff.in_set(RenderSet::PrepareAssets));
+            GpuImage::register_system(
+                renderapp,
+                do_stuff
+                    .in_set(RenderSet::PrepareAssets)
+                    .before(prepare_assets::<PreparedMaterial<StandardMaterial>>),
+            );
         } else {
             warn!("unable to init dmabuf importing!");
         }
@@ -96,10 +102,11 @@ fn do_stuff(
             if let Some(DmaImage::UnImported(dmabuf)) = imported.remove(&handle) {
                 match import_texture(&device, dmabuf) {
                     Ok(tex) => {
+                        info!("imported dmatex");
                         imported.insert(handle.clone(), DmaImage::Imported(tex));
                     }
                     Err(err) => {
-                        error!("failed to import dmabuf: {err}");
+                        error!("failed to import dmatex: {err}");
                         continue;
                     }
                 }
@@ -110,11 +117,12 @@ fn do_stuff(
             continue;
         };
 
-        if let Some(DmaImage::Imported(tex)) = imported.get(&handle) {
-            render_tex.texture_view = tex.texture_view.clone();
+        if let Some(DmaImage::Imported(tex)) = imported.remove(&handle) {
+            info!("setting texture view!");
+            render_tex.texture_view = tex.texture_view;
             render_tex.size = tex.texture.size();
             render_tex.mip_level_count = tex.texture.mip_level_count();
-            render_tex.texture = tex.texture.clone();
+            render_tex.texture = tex.texture;
         } else {
             error!("unreachable");
         }
@@ -322,8 +330,8 @@ fn import_texture(device: &RenderDevice, buf: Dmatex) -> Result<ImportedTexture,
                 let mem = dev
                     .raw_device()
                     .allocate_memory(&alloc_info, None)
+                    .inspect_err(|_| dev.raw_device().destroy_image(image, None))
                     .map_err(ImportError::VulkanMemoryAllocFailed)?;
-                // let info = vk::BindImageMemoryInfo::default().image(image).memory(mem);
                 dev.raw_device()
                     .bind_image_memory(image, mem, 0)
                     .map_err(ImportError::VulkanImageMemoryBindFailed)?;
@@ -353,6 +361,7 @@ fn import_texture(device: &RenderDevice, buf: Dmatex) -> Result<ImportedTexture,
             Some({
                 let dev = device.clone();
                 Box::new(move || {
+                    info!("dropping dmatex wgpu texture");
                     dev.wgpu_device().as_hal::<Vulkan, _, _>(move |dev| {
                         if let Some(dev) = dev {
                             dev.raw_device().free_memory(mem, None);

@@ -15,16 +15,14 @@ async fn main() {
     let conn = zbus::connection::Connection::session().await.unwrap();
     let proxy = TestInterfaceProxy::builder(&conn).build().await.unwrap();
     let vk = create_instance();
-    let image = create_exportable_image(
-        &vk,
-        vk::Format::R8G8B8A8_UNORM,
-        vk::Extent3D {
-            width: 2,
-            height: 2,
-            depth: 1,
-        },
-    );
-    write_clear_color(&vk, &image, [127, 255, 255, 255]);
+    let res = vk::Extent3D {
+        width: 2,
+        height: 2,
+        depth: 1,
+    };
+    let format = vk::Format::R8G8B8A8_UNORM;
+    let image = create_exportable_image(&vk, format, res);
+    write_clear_color(&vk, &image, res, [255, 0, 255, 255]);
     let planes = get_planes(&image)
         .map(|r| unsafe { vk.dev.get_image_subresource_layout(image.image, r) })
         .map(|p| DmatexPlane {
@@ -37,9 +35,12 @@ async fn main() {
         .dmatex(Dmatex {
             dmabuf_fd: image.fd.try_clone().unwrap().into(),
             planes,
-            res: Resolution { x: 512, y: 512 },
+            res: Resolution {
+                x: res.width,
+                y: res.height,
+            },
             modifier: image.modifier,
-            format: vk_format_to_drm_fourcc(vk::Format::R8G8B8A8_UNORM).unwrap() as u32,
+            format: vk_format_to_drm_fourcc(format).unwrap() as u32,
             flip_y: false,
         })
         .await
@@ -65,7 +66,7 @@ fn plane_flag_from_plane_index(index: u32) -> vk::ImageAspectFlags {
     }
 }
 
-fn write_clear_color(vk: &VulkanInfo, image: &ExportedImage, color: [u32; 4]) {
+fn write_clear_color(vk: &VulkanInfo, image: &ExportedImage, res: vk::Extent3D, color: [u8; 4]) {
     let buffer = vk.command_buffers[0];
     unsafe {
         let begin_info = vk::CommandBufferBeginInfo::default()
@@ -74,22 +75,62 @@ fn write_clear_color(vk: &VulkanInfo, image: &ExportedImage, color: [u32; 4]) {
             .reset_command_buffer(buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
             .unwrap();
         vk.dev.begin_command_buffer(buffer, &begin_info).unwrap();
-        let plane_ranges = get_planes(image)
-            .map(|_| vk::ImageSubresourceRange {
+        let buffer_size = (res.height * res.width * res.depth * 4) as u64;
+        let buffer_info = vk::BufferCreateInfo {
+            flags: vk::BufferCreateFlags::empty(),
+            size: buffer_size,
+            usage: vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
+        let mem_buffer = vk.dev.create_buffer(&buffer_info, None).unwrap();
+        let mem_properties = vk
+            .instance
+            .get_physical_device_memory_properties(vk.phys_dev);
+        let mem_reqs = vk.dev.get_buffer_memory_requirements(mem_buffer);
+        let alloc_info = vk::MemoryAllocateInfo {
+            allocation_size: buffer_size,
+            memory_type_index: find_memorytype_index(
+                &mem_reqs,
+                &mem_properties,
+                vk::MemoryPropertyFlags::HOST_VISIBLE,
+            )
+            .unwrap(),
+            ..Default::default()
+        };
+        let buffer_mem = vk.dev.allocate_memory(&alloc_info, None).unwrap();
+        vk.dev
+            .bind_buffer_memory(mem_buffer, buffer_mem, 0)
+            .unwrap();
+        let mapped_pointer = vk
+            .dev
+            .map_memory(buffer_mem, 0, buffer_size, vk::MemoryMapFlags::empty())
+            .unwrap();
+        let data = color
+            .into_iter()
+            .cycle()
+            .take(buffer_size as usize)
+            .collect::<Vec<_>>();
+        mapped_pointer.copy_from(data.as_ptr() as _, buffer_size as usize);
+        vk.dev.unmap_memory(buffer_mem);
+        let regions = &[vk::BufferImageCopy {
+            image_subresource: vk::ImageSubresourceLayers {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
+                mip_level: 0,
                 base_array_layer: 0,
                 layer_count: 1,
-            })
-            .collect::<Vec<_>>();
-        vk.dev.cmd_clear_color_image(
+            },
+            image_extent: res,
+            ..Default::default()
+        }];
+        vk.dev.cmd_copy_buffer_to_image(
             buffer,
+            mem_buffer,
             image.image,
             vk::ImageLayout::GENERAL,
-            &vk::ClearColorValue { uint32: color },
-            &plane_ranges,
+            regions,
         );
+
         vk.dev.end_command_buffer(buffer).unwrap();
         let command_buffers = &[buffer];
 
@@ -102,6 +143,8 @@ fn write_clear_color(vk: &VulkanInfo, image: &ExportedImage, color: [u32; 4]) {
             .queue_submit(vk.render_queue, &[submit_info], fence)
             .expect("queue submit failed.");
         vk.dev.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+        vk.dev.destroy_buffer(mem_buffer, None);
+        vk.dev.free_memory(buffer_mem, None);
     }
 }
 
@@ -215,21 +258,31 @@ pub fn find_memorytype_index(
     memory_prop: &vk::PhysicalDeviceMemoryProperties,
     flags: vk::MemoryPropertyFlags,
 ) -> Option<u32> {
-    memory_prop.memory_types[..memory_prop.memory_type_count as _]
+    memory_prop
+        .memory_types_as_slice()
         .iter()
         .enumerate()
         .find(|(index, memory_type)| {
             (1 << index) & memory_req.memory_type_bits != 0
                 && memory_type.property_flags & flags == flags
         })
+        .inspect(|(_, mem_type)| {
+            println!(
+                "protected: {}",
+                mem_type
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::PROTECTED)
+            )
+        })
         .map(|(index, _memory_type)| index as _)
 }
 
-const DEVICE_EXTS: [&CStr; 4] = [
+const DEVICE_EXTS: [&CStr; 5] = [
     ash::ext::external_memory_dma_buf::NAME,
     ash::khr::external_memory_fd::NAME,
     ash::khr::external_memory::NAME,
     ash::ext::image_drm_format_modifier::NAME,
+    ash::ext::host_image_copy::NAME,
 ];
 
 struct VulkanInfo {
@@ -283,10 +336,12 @@ fn create_instance() -> VulkanInfo {
             .queue_priorities(&priorities);
 
         let dev_ext_pointers = DEVICE_EXTS.map(|s| s.as_ptr());
-
+        let mut feature =
+            vk::PhysicalDeviceHostImageCopyFeaturesEXT::default().host_image_copy(false);
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(std::slice::from_ref(&queue_info))
-            .enabled_extension_names(&dev_ext_pointers);
+            .enabled_extension_names(&dev_ext_pointers)
+            .push_next(&mut feature);
 
         let device = instance
             .create_device(phys_dev, &device_create_info, None)

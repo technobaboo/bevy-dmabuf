@@ -1,12 +1,28 @@
 use std::sync::{Mutex, mpsc};
 
 use bevy::{
-    app::{App, AppExit, PostUpdate, Startup, Update}, asset::{Assets, Handle}, color::Color, core_pipeline::core_3d::Camera3d, ecs::{
+    DefaultPlugins,
+    app::{App, AppExit, PostUpdate, Startup, Update},
+    asset::{Assets, Handle},
+    color::Color,
+    core_pipeline::core_3d::Camera3d,
+    ecs::{
         resource::Resource,
         system::{Commands, Res, ResMut},
-    }, image::Image, log::{error, info}, math::{
-        primitives::{Circle, Cuboid}, Quat, Vec3
-    }, pbr::{MeshMaterial3d, PointLight, StandardMaterial}, render::mesh::{Mesh, Mesh3d}, transform::components::Transform, utils::default, DefaultPlugins
+    },
+    image::Image,
+    log::{error, info},
+    math::{
+        Quat, Vec3,
+        primitives::{Circle, Cuboid},
+    },
+    pbr::{MeshMaterial3d, PointLight, StandardMaterial},
+    render::{
+        mesh::{Mesh, Mesh3d},
+        pipelined_rendering::PipelinedRenderingPlugin,
+    },
+    transform::components::Transform,
+    utils::default,
 };
 use bevy_dmabuf::{
     dmatex::Dmatex,
@@ -33,7 +49,7 @@ async fn main() -> AppExit {
 
     App::new()
         .insert_resource(Receiver(rx.into()))
-        .add_plugins(add_dmabuf_init_plugin(DefaultPlugins))
+        .add_plugins(add_dmabuf_init_plugin(DefaultPlugins).disable::<PipelinedRenderingPlugin>())
         .add_plugins(DmabufImportPlugin)
         .add_systems(Startup, setup)
         .add_systems(PostUpdate, update_tex)
@@ -41,6 +57,7 @@ async fn main() -> AppExit {
         .run()
 }
 fn update_mat(handle: Res<CubeMat>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    // info!("updating mat");
     materials.get_mut(&handle.0);
 }
 fn update_tex(

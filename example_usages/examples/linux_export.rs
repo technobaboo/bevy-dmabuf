@@ -1,5 +1,5 @@
 use std::{
-    os::fd::{FromRawFd, OwnedFd},
+    os::fd::{BorrowedFd, FromRawFd, IntoRawFd, OwnedFd},
     sync::Arc,
     time::Duration,
 };
@@ -24,7 +24,7 @@ async fn main() {
     let proxy = TestInterfaceProxy::builder(&conn).build().await.unwrap();
     let notify = Arc::new(Notify::new());
     wlx_capture.init(&[], notify.clone(), |notify, frame| {
-        notify.notify_waiters();
+        notify.notify_one();
         match &frame {
             WlxFrame::Dmabuf(_) => println!("dmabuf"),
             WlxFrame::MemFd(_) => println!("mem_fd"),
@@ -32,10 +32,19 @@ async fn main() {
         }
 
         if let WlxFrame::Dmabuf(dmabuf) = frame {
+            // i *think* wlx-capture automatically closes that dmabuf? and sometimes its already
+            // invalid
+            let fd = unsafe { BorrowedFd::borrow_raw(dmabuf.planes.first()?.fd?) };
+            let cloned_fd = match fd.try_clone_to_owned() {
+                Ok(fd) => fd,
+                Err(err) => {
+                    println!("unable to clone fd: {err}");
+                    return None;
+                }
+            };
+
             return Some(Dmatex {
-                dmabuf_fd: unsafe {
-                    OwnedFd::from_raw_fd(dmabuf.planes.first().unwrap().fd.unwrap()).into()
-                },
+                dmabuf_fd: cloned_fd.into(),
                 planes: dmabuf
                     .planes
                     .iter()
