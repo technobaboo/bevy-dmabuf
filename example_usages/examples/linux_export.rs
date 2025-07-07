@@ -65,11 +65,10 @@ async fn main() {
         }
         None
     });
-    loop {
-        wlx_capture.request_new_frame();
-        _ = timeout(Duration::from_millis(250), notify.notified()).await;
-        if let Some(event) = wlx_capture.receive() {
-            _ = proxy.dmatex(event).await;
-        }
+    wlx_capture.request_new_frame();
+    notify.notified().await;
+    if let Some(event) = wlx_capture.receive() {
+        _ = proxy.dmatex(event).await;
     }
+    tokio::signal::ctrl_c().await.unwrap();
 }

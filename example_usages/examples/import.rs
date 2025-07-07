@@ -69,7 +69,7 @@ fn update_tex(
 ) {
     if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
         info!("got dmatex");
-        match dmatexs.set(&mut images, buf) {
+        match dmatexs.set(&mut images, buf, None) {
             Ok(image) => {
                 let mat = materials.get_mut(&handle.0).unwrap();
                 mat.base_color_texture = Some(image);

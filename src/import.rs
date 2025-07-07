@@ -64,8 +64,17 @@ impl Plugin for DmabufImportPlugin {
 pub struct ImportedDmatexs(Arc<Mutex<HashMap<Handle<Image>, DmaImage>>>);
 
 enum DmaImage {
-    UnImported(Dmatex),
+    UnImported(Dmatex, DropCallback),
     Imported(ImportedTexture),
+}
+
+struct DropCallback(Option<Box<dyn FnOnce() + 'static + Send + Sync>>);
+impl Drop for DropCallback {
+    fn drop(&mut self) {
+        if let Some(callback) = self.0.take() {
+            callback();
+        }
+    }
 }
 
 impl ImportedDmatexs {
@@ -73,13 +82,14 @@ impl ImportedDmatexs {
         &self,
         images: &mut Assets<Image>,
         buf: Dmatex,
+        on_drop: Option<Box<dyn FnOnce() + 'static + Send + Sync>>,
     ) -> Result<Handle<Image>, ImportError> {
         let handle = get_handle(images, &buf)?;
         #[expect(clippy::unwrap_used)]
-        self.0
-            .lock()
-            .unwrap()
-            .insert(handle.clone_weak(), DmaImage::UnImported(buf));
+        self.0.lock().unwrap().insert(
+            handle.clone_weak(),
+            DmaImage::UnImported(buf, DropCallback(on_drop)),
+        );
         Ok(handle)
     }
 }
@@ -98,9 +108,9 @@ fn do_stuff(
             imported.remove(&handle);
             continue;
         }
-        if matches!(imported.get(&handle), Some(DmaImage::UnImported(_))) {
-            if let Some(DmaImage::UnImported(dmabuf)) = imported.remove(&handle) {
-                match import_texture(&device, dmabuf) {
+        if matches!(imported.get(&handle), Some(DmaImage::UnImported(_, _))) {
+            if let Some(DmaImage::UnImported(dmabuf, on_drop)) = imported.remove(&handle) {
+                match import_texture(&device, dmabuf, on_drop) {
                     Ok(tex) => {
                         info!("imported dmatex");
                         imported.insert(handle.clone(), DmaImage::Imported(tex));
@@ -191,8 +201,12 @@ pub struct ImportedTexture {
     texture_view: TextureView,
 }
 
-#[tracing::instrument(level = "debug", skip(device))]
-fn import_texture(device: &RenderDevice, buf: Dmatex) -> Result<ImportedTexture, ImportError> {
+#[tracing::instrument(level = "debug", skip(device, on_drop))]
+fn import_texture(
+    device: &RenderDevice,
+    buf: Dmatex,
+    on_drop: DropCallback,
+) -> Result<ImportedTexture, ImportError> {
     let vulkan_format = drm_fourcc_to_vk_format(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
@@ -361,6 +375,7 @@ fn import_texture(device: &RenderDevice, buf: Dmatex) -> Result<ImportedTexture,
             Some({
                 let dev = device.clone();
                 Box::new(move || {
+                    let _on_drop = on_drop;
                     info!("dropping dmatex wgpu texture");
                     dev.wgpu_device().as_hal::<Vulkan, _, _>(move |dev| {
                         if let Some(dev) = dev {

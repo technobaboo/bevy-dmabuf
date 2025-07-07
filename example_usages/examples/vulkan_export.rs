@@ -277,12 +277,11 @@ pub fn find_memorytype_index(
         .map(|(index, _memory_type)| index as _)
 }
 
-const DEVICE_EXTS: [&CStr; 5] = [
+const DEVICE_EXTS: [&CStr; 4] = [
     ash::ext::external_memory_dma_buf::NAME,
     ash::khr::external_memory_fd::NAME,
     ash::khr::external_memory::NAME,
     ash::ext::image_drm_format_modifier::NAME,
-    ash::ext::host_image_copy::NAME,
 ];
 
 struct VulkanInfo {
@@ -336,12 +335,9 @@ fn create_instance() -> VulkanInfo {
             .queue_priorities(&priorities);
 
         let dev_ext_pointers = DEVICE_EXTS.map(|s| s.as_ptr());
-        let mut feature =
-            vk::PhysicalDeviceHostImageCopyFeaturesEXT::default().host_image_copy(false);
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(std::slice::from_ref(&queue_info))
-            .enabled_extension_names(&dev_ext_pointers)
-            .push_next(&mut feature);
+            .enabled_extension_names(&dev_ext_pointers);
 
         let device = instance
             .create_device(phys_dev, &device_create_info, None)
