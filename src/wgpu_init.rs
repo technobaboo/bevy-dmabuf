@@ -40,6 +40,8 @@ use color_eyre::eyre::bail;
 use wgpu::hal::Api;
 use wgpu::hal::api::Vulkan;
 
+use crate::required_device_extensions;
+
 #[cfg(not(target_os = "android"))]
 const VK_TARGET_VERSION_ASH: u32 = ash::vk::make_api_version(0, 1, 2, 0);
 #[cfg(target_os = "android")]
@@ -57,13 +59,7 @@ fn init_graphics() -> color_eyre::Result<(
     let mut instance_extensions =
         <Vulkan as Api>::Instance::desired_extensions(&vk_entry, VK_TARGET_VERSION_ASH, flags)?;
     instance_extensions.dedup();
-    let device_extensions = [
-        // ash::khr::external_semaphore_fd::NAME,
-        ash::ext::image_drm_format_modifier::NAME,
-        ash::ext::external_memory_dma_buf::NAME,
-        ash::khr::external_memory_fd::NAME,
-        ash::khr::external_memory::NAME,
-        ash::khr::swapchain::NAME,
+    let mut device_extensions = vec![
         // #[cfg(target_os = "android")]
         ash::khr::draw_indirect_count::NAME,
         ash::khr::timeline_semaphore::NAME,
@@ -74,6 +70,8 @@ fn init_graphics() -> color_eyre::Result<(
         #[cfg(target_os = "macos")]
         ash::ext::metal_objects::NAME,
     ];
+    device_extensions.extend(required_device_extensions());
+    device_extensions.dedup();
 
     let vk_instance = unsafe {
         let extensions_cchar: Vec<_> = instance_extensions.iter().map(|s| s.as_ptr()).collect();
