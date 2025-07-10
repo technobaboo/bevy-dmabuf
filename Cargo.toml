@@ -2,6 +2,9 @@
 name = "bevy-dmabuf"
 version = "0.1.0"
 edition = "2024"
+license = "MIT/Apache-2.0"
+rust-version = "1.88"
+repository = "https://github.com/Schmarni-Dev/bevy-dmabuf/"
 
 [dependencies]
 ash = "0.38.0"
@@ -16,11 +19,6 @@ serde = { version = "1", features = ["derive"] }
 
 [workspace]
 members = ["example_usages"]
-
-# [patch.crates-io]
-# tracing-tracy = { git = "https://github.com/nagisa/rust_tracy_client", tag = "tracy-client-v0.17.6" }
-# tracy-client = { git = "https://github.com/nagisa/rust_tracy_client", tag = "tracy-client-v0.17.6" }
-# tracy-client-sys = { git = "https://github.com/nagisa/rust_tracy_client", tag = "tracy-client-v0.17.6" }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
