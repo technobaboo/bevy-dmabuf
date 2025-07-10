@@ -14,7 +14,6 @@ use bevy::{
         system::{Res, ResMut},
     },
     image::Image,
-    log::{error, info, tracing, warn},
     pbr::{PreparedMaterial, StandardMaterial},
     platform::collections::HashMap,
     render::{
@@ -29,6 +28,7 @@ use bevy::{
 };
 use drm_fourcc::DrmFourcc;
 use thiserror::Error;
+use tracing::{error, info, warn};
 use wgpu::{
     TextureUsages, TextureViewDescriptor,
     hal::{MemoryFlags, TextureDescriptor, TextureUses, vulkan::Api as Vulkan},

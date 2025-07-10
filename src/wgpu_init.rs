@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use ash::vk::PhysicalDeviceType;
 use bevy::app::{Plugin, PluginGroup, PluginGroupBuilder};
-use bevy::log::debug;
+use tracing::debug;
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderInstance, RenderQueue, WgpuWrapper,
 };

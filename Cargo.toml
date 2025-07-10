@@ -10,14 +10,19 @@ keywords = ["bevy", "dmabuf", "dmatex"]
 
 [dependencies]
 ash = "0.38.0"
-bevy = { version = "0.16", features = [], default-features = true }
+bevy = { version = "0.16", features = [
+	"bevy_render",
+	"bevy_image",
+	"bevy_pbr",
+	"bevy_asset",
+], default-features = false }
 color-eyre = "0.6.3"
 drm-fourcc = "2.2.0"
 thiserror = "2.0.12"
-vulkano = "0.35.1"
 wgpu = "24"
 zbus = "5.7.0"
 serde = { version = "1", features = ["derive"] }
+tracing = { version = "0.1", default-features = false }
 
 [workspace]
 members = ["example_usages"]

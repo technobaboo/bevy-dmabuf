@@ -2,7 +2,7 @@ use ash::vk::{
     self, DrmFormatModifierProperties2EXT, FormatProperties, FormatProperties2,
     ImageFormatProperties,
 };
-use bevy::log::error;
+use tracing::error;
 
 pub fn get_drm_modifiers(
     instance: &ash::Instance,
