@@ -5,6 +5,8 @@ edition = "2024"
 license = "MIT/Apache-2.0"
 rust-version = "1.88"
 repository = "https://github.com/Schmarni-Dev/bevy-dmabuf/"
+description = "allows importing linux dmabufs into a bevy image"
+keywords = ["bevy", "dmabuf", "dmatex"]
 
 [dependencies]
 ash = "0.38.0"
