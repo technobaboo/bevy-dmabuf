@@ -24,6 +24,10 @@ zbus = "5.7.0"
 serde = { version = "1", features = ["derive"] }
 tracing = { version = "0.1", default-features = false }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+bevy = { version = "0.16", default-features = true }
+
 [workspace]
 members = ["example_usages"]
 

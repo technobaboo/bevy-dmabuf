@@ -24,7 +24,6 @@ async fn main() {
     let proxy = TestInterfaceProxy::builder(&conn).build().await.unwrap();
     let notify = Arc::new(Notify::new());
     wlx_capture.init(&[], notify.clone(), |notify, frame| {
-        notify.notify_one();
         match &frame {
             WlxFrame::Dmabuf(_) => println!("dmabuf"),
             WlxFrame::MemFd(_) => println!("mem_fd"),
@@ -32,26 +31,26 @@ async fn main() {
         }
 
         if let WlxFrame::Dmabuf(dmabuf) = frame {
-            // i *think* wlx-capture automatically closes that dmabuf? and sometimes its already
-            // invalid
-            let fd = unsafe { BorrowedFd::borrow_raw(dmabuf.planes.first()?.fd?) };
-            let cloned_fd = match fd.try_clone_to_owned() {
-                Ok(fd) => fd,
-                Err(err) => {
-                    println!("unable to clone fd: {err}");
-                    return None;
-                }
-            };
-
             return Some(Dmatex {
-                dmabuf_fd: cloned_fd.into(),
                 planes: dmabuf
                     .planes
                     .iter()
-                    .filter(|p| p.fd.is_some())
-                    .map(|plane| DmatexPlane {
-                        offset: plane.offset,
-                        stride: plane.stride,
+                    .filter_map(|plane| {
+                        // i *think* wlx-capture automatically closes that dmabuf? and sometimes its already
+                        // invalid
+                        let fd = unsafe { BorrowedFd::borrow_raw(plane.fd?) };
+                        let cloned_fd = match fd.try_clone_to_owned() {
+                            Ok(fd) => fd,
+                            Err(err) => {
+                                println!("unable to clone fd: {err}");
+                                return None;
+                            }
+                        };
+                        Some(DmatexPlane {
+                            dmabuf_fd: cloned_fd.into(),
+                            offset: plane.offset,
+                            stride: plane.stride,
+                        })
                     })
                     .collect(),
                 res: Resolution {
@@ -63,12 +62,21 @@ async fn main() {
                 flip_y: matches!(dmabuf.format.transform, Transform::Flipped),
             });
         }
+        notify.notify_one();
         None
     });
-    wlx_capture.request_new_frame();
-    notify.notified().await;
-    if let Some(event) = wlx_capture.receive() {
-        _ = proxy.dmatex(event).await;
+    let frames = tokio::spawn(async move {
+        loop {
+            println!("frame");
+            wlx_capture.request_new_frame();
+            _ = timeout(Duration::from_secs(1), notify.notified()).await;
+            if let Some(event) = wlx_capture.receive() {
+                _ = proxy.dmatex(event).await;
+            }
+        }
+    });
+    tokio::select! {
+        _ = frames => {}
+        _ = tokio::signal::ctrl_c() => {}
     }
-    tokio::signal::ctrl_c().await.unwrap();
 }

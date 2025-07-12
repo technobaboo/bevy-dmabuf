@@ -3,7 +3,6 @@ use zbus::zvariant::{self, OwnedFd};
 /// Dmabuf Backed Texture
 #[derive(Debug, serde::Serialize, serde::Deserialize, zvariant::Type)]
 pub struct Dmatex {
-    pub dmabuf_fd: OwnedFd,
     pub planes: Vec<DmatexPlane>,
     pub res: Resolution,
     pub modifier: u64,
@@ -19,6 +18,7 @@ pub struct Resolution {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, zvariant::Type)]
 pub struct DmatexPlane {
+    pub dmabuf_fd: OwnedFd,
     pub offset: u32,
     pub stride: i32,
 }

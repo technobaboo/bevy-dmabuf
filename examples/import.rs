@@ -29,7 +29,6 @@ use bevy_dmabuf::{
     import::{DmabufImportPlugin, ImportedDmatexs},
     wgpu_init::add_dmabuf_init_plugin,
 };
-use example_usages::TestInterface;
 
 #[tokio::main]
 async fn main() -> AppExit {
@@ -53,12 +52,7 @@ async fn main() -> AppExit {
         .add_plugins(DmabufImportPlugin)
         .add_systems(Startup, setup)
         .add_systems(PostUpdate, update_tex)
-        .add_systems(Update, update_mat)
         .run()
-}
-fn update_mat(handle: Res<CubeMat>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    // info!("updating mat");
-    materials.get_mut(&handle.0);
 }
 fn update_tex(
     handle: Res<CubeMat>,
@@ -122,3 +116,14 @@ fn setup(
 struct Receiver(Mutex<mpsc::Receiver<Dmatex>>);
 #[derive(Resource)]
 struct CubeMat(Handle<StandardMaterial>);
+
+pub struct TestInterface {
+    pub dmatex_channel: mpsc::Sender<Dmatex>,
+}
+
+#[zbus::interface(name = "dev.schmarni.bevy_dmabuf.dmatex")]
+impl TestInterface {
+    fn dmatex(&self, dmabuf: Dmatex) {
+        _ = self.dmatex_channel.send(dmabuf);
+    }
+}
