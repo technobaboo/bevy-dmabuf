@@ -28,7 +28,7 @@ use bevy::{
 };
 use drm_fourcc::DrmFourcc;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use wgpu::{
     TextureUsages, TextureViewDescriptor,
     hal::{MemoryFlags, TextureDescriptor, TextureUses, vulkan::Api as Vulkan},
@@ -50,7 +50,7 @@ impl Plugin for DmabufImportPlugin {
         if let Some(renderapp) = app.get_sub_app_mut(RenderApp) {
             GpuImage::register_system(
                 renderapp,
-                do_stuff
+                insert_dmatex_into_gpu_images
                     .in_set(RenderSet::PrepareAssets)
                     .before(prepare_assets::<PreparedMaterial<StandardMaterial>>),
             );
@@ -92,9 +92,29 @@ impl ImportedDmatexs {
         );
         Ok(handle)
     }
+    pub fn insert_imported_dmatex(
+        &self,
+        images: &mut Assets<Image>,
+        tex: ImportedTexture,
+    ) -> Handle<Image> {
+        let handle = images.add(Image::new_fill(
+            tex.texture.size(),
+            tex.texture.dimension(),
+            &[255, 255, 255, 255],
+            tex.texture.format(),
+            RenderAssetUsages::RENDER_WORLD,
+        ));
+
+        #[expect(clippy::unwrap_used)]
+        self.0
+            .lock()
+            .unwrap()
+            .insert(handle.clone_weak(), DmaImage::Imported(tex));
+        handle
+    }
 }
 
-fn do_stuff(
+fn insert_dmatex_into_gpu_images(
     mut gpu_images: ResMut<RenderAssets<GpuImage>>,
     imported: Res<ImportedDmatexs>,
     device: Res<RenderDevice>,
@@ -128,7 +148,7 @@ fn do_stuff(
         };
 
         if let Some(DmaImage::Imported(tex)) = imported.remove(&handle) {
-            info!("setting texture view!");
+            debug!("setting texture view!");
             render_tex.texture_view = tex.texture_view;
             render_tex.size = tex.texture.size();
             render_tex.mip_level_count = tex.texture.mip_level_count();
@@ -202,7 +222,7 @@ pub struct ImportedTexture {
 }
 
 #[tracing::instrument(level = "debug", skip(device, on_drop))]
-fn import_texture(
+pub fn import_texture(
     device: &RenderDevice,
     buf: Dmatex,
     on_drop: DropCallback,
