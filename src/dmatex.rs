@@ -5,7 +5,6 @@ use zbus::zvariant::{self, OwnedFd};
 pub struct Dmatex {
     pub planes: Vec<DmatexPlane>,
     pub res: Resolution,
-    pub modifier: u64,
     pub format: u32,
     pub flip_y: bool,
 }
@@ -19,6 +18,7 @@ pub struct Resolution {
 #[derive(Debug, serde::Serialize, serde::Deserialize, zvariant::Type)]
 pub struct DmatexPlane {
     pub dmabuf_fd: OwnedFd,
+    pub modifier: u64,
     pub offset: u32,
     pub stride: i32,
 }

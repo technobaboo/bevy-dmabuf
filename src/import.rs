@@ -68,7 +68,7 @@ enum DmaImage {
     Imported(ImportedTexture),
 }
 
-struct DropCallback(Option<Box<dyn FnOnce() + 'static + Send + Sync>>);
+pub struct DropCallback(pub Option<Box<dyn FnOnce() + 'static + Send + Sync>>);
 impl Drop for DropCallback {
     fn drop(&mut self) {
         if let Some(callback) = self.0.take() {
@@ -194,6 +194,8 @@ pub enum ImportError {
         "The number of DmaTex planes does not equal the number of planes defined by the drm modifier"
     )]
     IncorrectNumberOfPlanes,
+    #[error("No Planes to Import")]
+    NoPlanes,
 }
 
 fn get_imported_descriptor(buf: &Dmatex) -> Result<wgpu::TextureDescriptor<'static>, ImportError> {
@@ -246,28 +248,29 @@ pub fn import_texture(
                     dev.raw_physical_device(),
                     vulkan_format,
                 );
-                let used_modifier = drm_format_properties
-                    .iter()
-                    .find(|v| v.drm_format_modifier == buf.modifier)
-                    .ok_or(ImportError::ModifierInvalid)?;
+                for plane in buf.planes.iter() {
+                    let _used_modifier = drm_format_properties
+                        .iter()
+                        .find(|v| v.drm_format_modifier == plane.modifier)
+                        .ok_or(ImportError::ModifierInvalid)?;
+                }
                 let image_type = vk::ImageType::TYPE_2D;
                 let usage_flags = vk::ImageUsageFlags::COLOR_ATTACHMENT
                     | vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::TRANSFER_DST;
                 let create_flags = vk::ImageCreateFlags::DISJOINT;
-                let _format_info = get_drm_image_modifier_info(
-                    dev.shared_instance().raw_instance(),
-                    dev.raw_physical_device(),
-                    vulkan_format,
-                    image_type,
-                    usage_flags,
-                    create_flags,
-                    buf.modifier,
-                )
-                .ok_or(ImportError::ModifierInvalid);
-                if buf.planes.len() != used_modifier.drm_format_modifier_plane_count as usize {
-                    return Err(ImportError::NotVulkan);
+                for plane in buf.planes.iter() {
+                    let _format_info = get_drm_image_modifier_info(
+                        dev.shared_instance().raw_instance(),
+                        dev.raw_physical_device(),
+                        vulkan_format,
+                        image_type,
+                        usage_flags,
+                        create_flags,
+                        plane.modifier,
+                    )
+                    .ok_or(ImportError::ModifierInvalid)?;
                 }
                 let plane_layouts = buf
                     .planes
@@ -281,10 +284,13 @@ pub fn import_texture(
                         size: 0,
                     })
                     .collect::<Vec<_>>();
-                let modifiers = vec![buf.modifier; buf.planes.len()];
+                let modifiers = buf.planes.iter().map(|p| p.modifier).collect::<Vec<_>>();
+                if buf.planes.is_empty() {
+                    return Err(ImportError::NoPlanes);
+                }
                 let mut drm_explicit_create_info = (buf.planes.len() == 1).then(|| {
                     vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
-                        .drm_format_modifier(buf.modifier)
+                        .drm_format_modifier(modifiers[0])
                         .plane_layouts(&plane_layouts)
                 });
                 let mut drm_list_create_info = (buf.planes.len() > 1).then(|| {

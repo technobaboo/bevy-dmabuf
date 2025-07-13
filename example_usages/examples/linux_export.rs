@@ -50,6 +50,7 @@ async fn main() {
                             dmabuf_fd: cloned_fd.into(),
                             offset: plane.offset,
                             stride: plane.stride,
+                            modifier: dmabuf.format.modifier,
                         })
                     })
                     .collect(),
@@ -57,7 +58,6 @@ async fn main() {
                     x: dmabuf.format.width,
                     y: dmabuf.format.height,
                 },
-                modifier: dmabuf.format.modifier,
                 format: dmabuf.format.fourcc.value,
                 flip_y: matches!(dmabuf.format.transform, Transform::Flipped),
             });
