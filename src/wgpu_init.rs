@@ -242,7 +242,7 @@ fn init_graphics() -> color_eyre::Result<(
     ))
 }
 
-pub(crate) fn vulkan_to_wgpu(format: ash::vk::Format) -> Option<wgpu::TextureFormat> {
+pub fn vulkan_to_wgpu(format: ash::vk::Format) -> Option<wgpu::TextureFormat> {
     use ash::vk::Format as F;
     use wgpu::TextureFormat as Tf;
     use wgpu::{AstcBlock, AstcChannel};
