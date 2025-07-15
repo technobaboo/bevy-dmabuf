@@ -390,7 +390,7 @@ pub fn import_texture(
                                 MemoryRequirements2::default().push_next(&mut dedicated_req);
                             dev.raw_device()
                                 .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs);
-                            let needs_dedicated = dedicated_req.requires_dedicated_allocation == 0;
+                            let needs_dedicated = dedicated_req.requires_dedicated_allocation != 0;
                             let layout = dev.raw_device().get_image_subresource_layout(
                                 image,
                                 vk::ImageSubresource::default().aspect_mask(aspect_flags),
@@ -440,7 +440,7 @@ pub fn import_texture(
                             .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs);
                         let size = mem_reqs.memory_requirements.size;
 
-                        let needs_dedicated = dedicated_req.requires_dedicated_allocation == 0;
+                        let needs_dedicated = dedicated_req.requires_dedicated_allocation != 0;
 
                         let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
                             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
