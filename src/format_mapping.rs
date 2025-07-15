@@ -138,3 +138,25 @@ pub fn vk_format_to_drm_fourcc(vk_format: vk::Format) -> Option<drm_fourcc::DrmF
         _ => return None,
     })
 }
+
+pub fn vk_format_to_srgb(vk_format: vk::Format) -> Option<vk::Format> {
+    use vk::Format as F;
+    Some(match vk_format {
+        F::R8_UNORM => F::R8_SRGB,
+        F::R8G8_UNORM => F::R8G8_SRGB,
+        F::R8G8B8_UNORM => F::R8G8B8_SRGB,
+        F::B8G8R8_UNORM => F::B8G8R8_SRGB,
+        F::R8G8B8A8_UNORM => F::R8G8B8A8_SRGB,
+        F::B8G8R8A8_UNORM => F::B8G8R8A8_SRGB,
+        F::A8B8G8R8_UNORM_PACK32 => F::A8B8G8R8_SRGB_PACK32,
+        F::BC1_RGB_UNORM_BLOCK => F::BC1_RGB_SRGB_BLOCK,
+        F::BC1_RGBA_UNORM_BLOCK => F::BC1_RGBA_SRGB_BLOCK,
+        F::BC2_UNORM_BLOCK => F::BC2_SRGB_BLOCK,
+        F::BC3_UNORM_BLOCK => F::BC3_SRGB_BLOCK,
+        F::BC7_UNORM_BLOCK => F::BC7_SRGB_BLOCK,
+        F::ETC2_R8G8B8_UNORM_BLOCK => F::ETC2_R8G8B8_SRGB_BLOCK,
+        F::ETC2_R8G8B8A1_UNORM_BLOCK => F::ETC2_R8G8B8A1_SRGB_BLOCK,
+        F::ETC2_R8G8B8A8_UNORM_BLOCK => F::ETC2_R8G8B8A8_SRGB_BLOCK,
+        _ => return None,
+    })
+}

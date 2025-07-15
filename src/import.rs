@@ -39,7 +39,9 @@ use wgpu::{
 
 use crate::{
     dmatex::Dmatex,
-    format_mapping::{drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers},
+    format_mapping::{
+        drm_fourcc_to_vk_format, get_drm_image_modifier_info, get_drm_modifiers, vk_format_to_srgb,
+    },
     wgpu_init::vulkan_to_wgpu,
 };
 
@@ -206,6 +208,11 @@ fn get_imported_descriptor(buf: &Dmatex) -> Result<wgpu::TextureDescriptor<'stat
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
     .ok_or(ImportError::VulkanIncompatibleFormat)?;
+    let vulkan_format = buf
+        .srgb
+        .then(|| vk_format_to_srgb(vulkan_format))
+        .flatten()
+        .unwrap_or(vulkan_format);
     Ok(wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -240,6 +247,11 @@ pub fn import_texture(
         DrmFourcc::try_from(buf.format).map_err(ImportError::UnrecognizedFourcc)?,
     )
     .ok_or(ImportError::VulkanIncompatibleFormat)?;
+    let vulkan_format = buf
+        .srgb
+        .then(|| vk_format_to_srgb(vulkan_format))
+        .flatten()
+        .unwrap_or(vulkan_format);
     let wgpu_desc = get_imported_descriptor(&buf)?;
     let (image, mem) = unsafe {
         device

@@ -6,7 +6,10 @@ pub struct Dmatex {
     pub planes: Vec<DmatexPlane>,
     pub res: Resolution,
     pub format: u32,
+    /// TODO: implement this, or remove it
     pub flip_y: bool,
+    /// if the format has an srgb version, use that
+    pub srgb: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, zvariant::Type, Copy, Clone)]
