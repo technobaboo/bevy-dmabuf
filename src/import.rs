@@ -4,7 +4,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ash::vk::{self, SubresourceLayout};
+use ash::vk::{
+    self, ImagePlaneMemoryRequirementsInfo, MemoryDedicatedRequirements, MemoryRequirements2,
+    SubresourceLayout,
+};
 use bevy::{
     app::Plugin,
     asset::{Assets, Handle, RenderAssetUsages},
@@ -259,7 +262,11 @@ pub fn import_texture(
                     | vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::TRANSFER_DST;
-                let create_flags = vk::ImageCreateFlags::DISJOINT;
+                let disjoint = buf.planes.len() > 1;
+                let create_flags = match disjoint {
+                    true => vk::ImageCreateFlags::DISJOINT,
+                    false => vk::ImageCreateFlags::empty(),
+                };
                 for plane in buf.planes.iter() {
                     let _format_info = get_drm_image_modifier_info(
                         dev.shared_instance().raw_instance(),
@@ -359,48 +366,106 @@ pub fn import_texture(
                     .ok_or(ImportError::NoValidMemoryTypes)?
                     .1;
                 let mut plane_mems = Vec::with_capacity(4);
-                for (i, v) in buf.planes.into_iter().enumerate() {
-                    let fd = OwnedFd::from(v.dmabuf_fd).into_raw_fd();
-                    let aspect_flags = match i {
-                        0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
-                        1 => vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
-                        2 => vk::ImageAspectFlags::MEMORY_PLANE_2_EXT,
-                        3 => vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
-                        _ => return Err(ImportError::IncorrectNumberOfPlanes),
-                    };
-                    let layout = dev.raw_device().get_image_subresource_layout(
-                        image,
-                        vk::ImageSubresource::default().aspect_mask(aspect_flags),
-                    );
+                match disjoint {
+                    true => {
+                        for (i, v) in buf.planes.into_iter().enumerate() {
+                            let fd = OwnedFd::from(v.dmabuf_fd);
+                            let aspect_flags = match i {
+                                0 => vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
+                                1 => vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
+                                2 => vk::ImageAspectFlags::MEMORY_PLANE_2_EXT,
+                                3 => vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
+                                _ => return Err(ImportError::IncorrectNumberOfPlanes),
+                            };
+                            let mut dedicated_req = MemoryDedicatedRequirements::default();
+                            let mut plane_req_info = ImagePlaneMemoryRequirementsInfo::default()
+                                .plane_aspect(aspect_flags);
+                            let mem_req_info = vk::ImageMemoryRequirementsInfo2::default()
+                                .image(image)
+                                .push_next(&mut plane_req_info);
+                            let mut mem_reqs =
+                                MemoryRequirements2::default().push_next(&mut dedicated_req);
+                            dev.raw_device()
+                                .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs);
+                            let needs_dedicated = dedicated_req.requires_dedicated_allocation == 0;
+                            let layout = dev.raw_device().get_image_subresource_layout(
+                                image,
+                                vk::ImageSubresource::default().aspect_mask(aspect_flags),
+                            );
 
-                    let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
-                        .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-                        .fd(fd);
+                            let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
+                                .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+                                .fd(fd.into_raw_fd());
 
-                    let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
-                    let alloc_info = vk::MemoryAllocateInfo::default()
-                        .allocation_size(layout.size)
-                        .memory_type_index(index)
-                        .push_next(&mut external_fd_info)
-                        .push_next(&mut dedicated);
+                            let mut dedicated =
+                                vk::MemoryDedicatedAllocateInfo::default().image(image);
+                            let mut alloc_info = vk::MemoryAllocateInfo::default()
+                                .allocation_size(layout.size)
+                                .memory_type_index(index)
+                                .push_next(&mut external_fd_info);
+                            if needs_dedicated {
+                                alloc_info = alloc_info.push_next(&mut dedicated);
+                            }
 
-                    let mem = dev
-                        .raw_device()
-                        .allocate_memory(&alloc_info, None)
-                        .inspect_err(|_| dev.raw_device().destroy_image(image, None))
-                        .map_err(ImportError::VulkanMemoryAllocFailed)?;
-                    plane_mems.push((
-                        mem,
-                        vk::BindImagePlaneMemoryInfo::default().plane_aspect(aspect_flags),
-                    ));
+                            let mem = dev
+                                .raw_device()
+                                .allocate_memory(&alloc_info, None)
+                                .inspect_err(|_| dev.raw_device().destroy_image(image, None))
+                                .map_err(ImportError::VulkanMemoryAllocFailed)?;
+                            plane_mems.push((
+                                mem,
+                                Some(
+                                    vk::BindImagePlaneMemoryInfo::default()
+                                        .plane_aspect(aspect_flags),
+                                ),
+                            ));
+                        }
+                    }
+                    false => {
+                        let fd = OwnedFd::from(
+                            buf.planes
+                                .into_iter()
+                                .next()
+                                .ok_or(ImportError::NoPlanes)?
+                                .dmabuf_fd,
+                        );
+                        let mut dedicated_req = MemoryDedicatedRequirements::default();
+                        let mut mem_reqs =
+                            MemoryRequirements2::default().push_next(&mut dedicated_req);
+                        let mem_req_info = vk::ImageMemoryRequirementsInfo2::default().image(image);
+                        dev.raw_device()
+                            .get_image_memory_requirements2(&mem_req_info, &mut mem_reqs);
+                        let size = mem_reqs.memory_requirements.size;
+
+                        let needs_dedicated = dedicated_req.requires_dedicated_allocation == 0;
+
+                        let mut external_fd_info = vk::ImportMemoryFdInfoKHR::default()
+                            .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+                            .fd(fd.into_raw_fd());
+                        let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
+                        let mut alloc_info = vk::MemoryAllocateInfo::default()
+                            .allocation_size(size)
+                            .memory_type_index(index)
+                            .push_next(&mut external_fd_info);
+                        if needs_dedicated {
+                            alloc_info = alloc_info.push_next(&mut dedicated);
+                        }
+                        let mem = dev
+                            .raw_device()
+                            .allocate_memory(&alloc_info, None)
+                            .inspect_err(|_| dev.raw_device().destroy_image(image, None))
+                            .map_err(ImportError::VulkanMemoryAllocFailed)?;
+                        plane_mems.push((mem, None));
+                    }
                 }
                 let bind_infos = plane_mems
                     .iter_mut()
-                    .map(|(mem, info)| {
-                        vk::BindImageMemoryInfo::default()
+                    .map(|(mem, info)| match info {
+                        Some(info) => vk::BindImageMemoryInfo::default()
                             .image(image)
                             .memory(*mem)
-                            .push_next(info)
+                            .push_next(info),
+                        None => vk::BindImageMemoryInfo::default().image(image).memory(*mem),
                     })
                     .collect::<Vec<_>>();
                 dev.raw_device()
