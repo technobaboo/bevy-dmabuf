@@ -5,8 +5,8 @@ use std::{
 };
 
 use ash::vk::{
-    self, ImagePlaneMemoryRequirementsInfo, MemoryDedicatedRequirements, MemoryRequirements2,
-    SubresourceLayout,
+    self, FormatFeatureFlags2, ImagePlaneMemoryRequirementsInfo, MemoryDedicatedRequirements,
+    MemoryRequirements2, SubresourceLayout,
 };
 use bevy::{
     app::Plugin,
@@ -251,18 +251,21 @@ pub fn import_texture(
                     dev.raw_physical_device(),
                     vulkan_format,
                 );
+                let mut disjoint = false;
                 for plane in buf.planes.iter() {
-                    let _used_modifier = drm_format_properties
+                    let used_modifier = drm_format_properties
                         .iter()
                         .find(|v| v.drm_format_modifier == plane.modifier)
                         .ok_or(ImportError::ModifierInvalid)?;
+                    disjoint |= used_modifier
+                        .drm_format_modifier_tiling_features
+                        .contains(FormatFeatureFlags2::DISJOINT_KHR);
                 }
                 let image_type = vk::ImageType::TYPE_2D;
                 let usage_flags = vk::ImageUsageFlags::COLOR_ATTACHMENT
                     | vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::TRANSFER_SRC
                     | vk::ImageUsageFlags::TRANSFER_DST;
-                let disjoint = buf.planes.len() > 1;
                 let create_flags = match disjoint {
                     true => vk::ImageCreateFlags::DISJOINT,
                     false => vk::ImageCreateFlags::empty(),
