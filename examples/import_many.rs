@@ -2,13 +2,13 @@ use std::sync::{Mutex, mpsc};
 
 use bevy::{
     DefaultPlugins,
-    app::{App, AppExit, PostUpdate, PreUpdate, Startup},
+    app::{App, AppExit, PostUpdate, Startup, Update},
     asset::{Assets, Handle},
     color::Color,
     core_pipeline::core_3d::Camera3d,
     ecs::{
         resource::Resource,
-        system::{Commands, Res, ResMut},
+        system::{Commands, Local, Res, ResMut},
     },
     image::Image,
     log::{error, info},
@@ -17,6 +17,7 @@ use bevy::{
         primitives::{Circle, Cuboid},
     },
     pbr::{MeshMaterial3d, PointLight, StandardMaterial},
+    prelude::{Deref, DerefMut},
     render::{
         mesh::{Mesh, Mesh3d},
         pipelined_rendering::PipelinedRenderingPlugin,
@@ -48,37 +49,40 @@ async fn main() -> AppExit {
 
     App::new()
         .insert_resource(Receiver(rx.into()))
-        .init_resource::<PendingDmatex>()
+        .init_resource::<Imported>()
         .add_plugins(add_dmabuf_init_plugin(DefaultPlugins).disable::<PipelinedRenderingPlugin>())
         .add_plugins(DmabufImportPlugin)
         .add_systems(Startup, setup)
-        .add_systems(PreUpdate, update_tex)
-        .add_systems(PostUpdate, import_tex)
+        .add_systems(PostUpdate, (update_tex, update))
         .run()
 }
 
-fn update_tex(
-    handle: Res<CubeMat>,
+#[derive(Resource, DerefMut, Deref, Default)]
+struct Imported(Vec<Handle<Image>>);
+fn update(
+    cube_mat: Res<CubeMat>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut pending: ResMut<PendingDmatex>,
+    imported: Res<Imported>,
+    mut index: Local<usize>,
 ) {
-    if let Some(image) = pending.0.take() {
-        let mat = materials.get_mut(&handle.0).unwrap();
-        mat.base_color_texture = Some(image);
+    if imported.is_empty() {
+        return;
     }
+    let mat = materials.get_mut(&cube_mat.0).unwrap();
+    mat.base_color_texture = Some(imported[*index].clone());
+    *index = (*index + 1) % imported.len();
 }
-
-fn import_tex(
+fn update_tex(
     dmatexs: Res<ImportedDmatexs>,
     mut receiv: ResMut<Receiver>,
-    mut pending: ResMut<PendingDmatex>,
     mut images: ResMut<Assets<Image>>,
+    mut imported: ResMut<Imported>,
 ) {
     if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
         info!("got dmatex");
         match dmatexs.set(&mut images, buf, None) {
             Ok(image) => {
-                pending.0 = Some(image);
+                imported.push(image);
             }
             Err(err) => {
                 error!("error while importing dmatex: {err}");
@@ -86,9 +90,6 @@ fn import_tex(
         }
     }
 }
-
-#[derive(Resource, Default)]
-struct PendingDmatex(Option<Handle<Image>>);
 
 // set up a simple 3D scene
 fn setup(

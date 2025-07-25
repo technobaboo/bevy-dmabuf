@@ -1,5 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 use std::{
+    ops::Deref,
     os::fd::{IntoRawFd as _, OwnedFd},
     sync::{Arc, Mutex},
 };
@@ -232,9 +233,19 @@ fn get_imported_descriptor(buf: &Dmatex) -> Result<wgpu::TextureDescriptor<'stat
     })
 }
 
+// #[derive(Clone)]
 pub struct ImportedTexture {
     texture: Texture,
     texture_view: TextureView,
+}
+
+impl Clone for ImportedTexture {
+    fn clone(&self) -> Self {
+        Self {
+            texture: self.texture.deref().clone().into(),
+            texture_view: self.texture_view.deref().clone().into(),
+        }
+    }
 }
 
 #[tracing::instrument(level = "debug", skip(device, on_drop))]

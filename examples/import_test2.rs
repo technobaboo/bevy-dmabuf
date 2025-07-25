@@ -1,4 +1,7 @@
-use std::sync::{Mutex, mpsc};
+use std::{
+    os::fd::AsFd,
+    sync::{Mutex, OnceLock},
+};
 
 use bevy::{
     DefaultPlugins,
@@ -8,9 +11,11 @@ use bevy::{
     core_pipeline::core_3d::Camera3d,
     ecs::{
         resource::Resource,
+        schedule::{IntoScheduleConfigs, common_conditions::not},
         system::{Commands, Res, ResMut},
     },
     image::Image,
+    input::{common_conditions::input_pressed, keyboard::KeyCode},
     log::{error, info},
     math::{
         Quat, Vec3,
@@ -18,21 +23,24 @@ use bevy::{
     },
     pbr::{MeshMaterial3d, PointLight, StandardMaterial},
     render::{
+        Render, RenderApp,
         mesh::{Mesh, Mesh3d},
         pipelined_rendering::PipelinedRenderingPlugin,
+        renderer::RenderDevice,
     },
     transform::components::Transform,
     utils::default,
 };
 use bevy_dmabuf::{
-    dmatex::Dmatex,
-    import::{DmabufImportPlugin, ImportedDmatexs},
+    dmatex::{Dmatex, DmatexPlane},
+    import::{DmabufImportPlugin, DropCallback, ImportedDmatexs, ImportedTexture, import_texture},
     wgpu_init::add_dmabuf_init_plugin,
 };
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() -> AppExit {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = watch::channel(None);
     let _conn = zbus::connection::Builder::session()
         .unwrap()
         .name("dev.schmarni.bevy_dmabuf.dmatex")
@@ -45,16 +53,22 @@ async fn main() -> AppExit {
         .build()
         .await
         .unwrap();
-
-    App::new()
-        .insert_resource(Receiver(rx.into()))
+    let mut app = App::new();
+    app.insert_resource(Receiver(rx.into()))
         .init_resource::<PendingDmatex>()
         .add_plugins(add_dmabuf_init_plugin(DefaultPlugins).disable::<PipelinedRenderingPlugin>())
         .add_plugins(DmabufImportPlugin)
         .add_systems(Startup, setup)
-        .add_systems(PreUpdate, update_tex)
-        .add_systems(PostUpdate, import_tex)
-        .run()
+        // .add_systems(PreUpdate, update_tex)
+        .add_systems(
+            PostUpdate,
+            import_tex.run_if(not(input_pressed(KeyCode::Space))),
+        );
+    app.sub_app_mut(RenderApp)
+        .add_systems(Render, |render_dev: Res<RenderDevice>| {
+            _ = RENDER_DEVICE.set(render_dev.clone());
+        });
+    app.run()
 }
 
 fn update_tex(
@@ -71,19 +85,43 @@ fn update_tex(
 fn import_tex(
     dmatexs: Res<ImportedDmatexs>,
     mut receiv: ResMut<Receiver>,
-    mut pending: ResMut<PendingDmatex>,
+    // mut pending: ResMut<PendingDmatex>,
     mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    handle: Res<CubeMat>,
 ) {
-    if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
-        info!("got dmatex");
-        match dmatexs.set(&mut images, buf, None) {
-            Ok(image) => {
-                pending.0 = Some(image);
-            }
-            Err(err) => {
-                error!("error while importing dmatex: {err}");
-            }
-        }
+    if let Some(buf) = receiv
+        .0
+        .get_mut()
+        .unwrap()
+        .borrow_and_update()
+        .as_ref()
+        .cloned()
+    {
+        info!("inserting imported dmatex");
+        let image = dmatexs.insert_imported_dmatex(&mut images, buf);
+        // pending.0 = Some(image);
+        let mat = materials.get_mut(&handle.0).unwrap();
+        mat.base_color_texture = Some(image);
+    }
+}
+
+fn clone_dmatex(tex: &Dmatex) -> Dmatex {
+    Dmatex {
+        planes: tex
+            .planes
+            .iter()
+            .map(|p| DmatexPlane {
+                dmabuf_fd: p.dmabuf_fd.as_fd().try_clone_to_owned().unwrap().into(),
+                modifier: p.modifier,
+                offset: p.offset,
+                stride: p.stride,
+            })
+            .collect(),
+        res: tex.res,
+        format: tex.format,
+        flip_y: tex.flip_y,
+        srgb: tex.srgb,
     }
 }
 
@@ -128,17 +166,21 @@ fn setup(
 }
 
 #[derive(Resource)]
-struct Receiver(Mutex<mpsc::Receiver<Dmatex>>);
+struct Receiver(Mutex<watch::Receiver<Option<ImportedTexture>>>);
 #[derive(Resource)]
 struct CubeMat(Handle<StandardMaterial>);
 
+static RENDER_DEVICE: OnceLock<RenderDevice> = OnceLock::new();
+
 pub struct TestInterface {
-    pub dmatex_channel: mpsc::Sender<Dmatex>,
+    pub dmatex_channel: watch::Sender<Option<ImportedTexture>>,
 }
 
 #[zbus::interface(name = "dev.schmarni.bevy_dmabuf.dmatex")]
 impl TestInterface {
     fn dmatex(&self, dmabuf: Dmatex) {
-        _ = self.dmatex_channel.send(dmabuf);
+        info!("got dmatex");
+        let tex = import_texture(RENDER_DEVICE.wait(), dmabuf, DropCallback(None)).unwrap();
+        _ = self.dmatex_channel.send(Some(tex));
     }
 }

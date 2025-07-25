@@ -1,4 +1,4 @@
-use std::sync::{Mutex, mpsc};
+use std::{os::fd::AsFd, sync::Mutex};
 
 use bevy::{
     DefaultPlugins,
@@ -8,9 +8,11 @@ use bevy::{
     core_pipeline::core_3d::Camera3d,
     ecs::{
         resource::Resource,
+        schedule::{IntoScheduleConfigs, common_conditions::not},
         system::{Commands, Res, ResMut},
     },
     image::Image,
+    input::{common_conditions::input_pressed, keyboard::KeyCode},
     log::{error, info},
     math::{
         Quat, Vec3,
@@ -25,14 +27,15 @@ use bevy::{
     utils::default,
 };
 use bevy_dmabuf::{
-    dmatex::Dmatex,
+    dmatex::{Dmatex, DmatexPlane},
     import::{DmabufImportPlugin, ImportedDmatexs},
     wgpu_init::add_dmabuf_init_plugin,
 };
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() -> AppExit {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = watch::channel(None);
     let _conn = zbus::connection::Builder::session()
         .unwrap()
         .name("dev.schmarni.bevy_dmabuf.dmatex")
@@ -53,7 +56,10 @@ async fn main() -> AppExit {
         .add_plugins(DmabufImportPlugin)
         .add_systems(Startup, setup)
         .add_systems(PreUpdate, update_tex)
-        .add_systems(PostUpdate, import_tex)
+        .add_systems(
+            PostUpdate,
+            import_tex.run_if(not(input_pressed(KeyCode::Space))),
+        )
         .run()
 }
 
@@ -74,7 +80,14 @@ fn import_tex(
     mut pending: ResMut<PendingDmatex>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
+    if let Some(buf) = receiv
+        .0
+        .get_mut()
+        .unwrap()
+        .borrow_and_update()
+        .as_ref()
+        .map(clone_dmatex)
+    {
         info!("got dmatex");
         match dmatexs.set(&mut images, buf, None) {
             Ok(image) => {
@@ -84,6 +97,25 @@ fn import_tex(
                 error!("error while importing dmatex: {err}");
             }
         }
+    }
+}
+
+fn clone_dmatex(tex: &Dmatex) -> Dmatex {
+    Dmatex {
+        planes: tex
+            .planes
+            .iter()
+            .map(|p| DmatexPlane {
+                dmabuf_fd: p.dmabuf_fd.as_fd().try_clone_to_owned().unwrap().into(),
+                modifier: p.modifier,
+                offset: p.offset,
+                stride: p.stride,
+            })
+            .collect(),
+        res: tex.res,
+        format: tex.format,
+        flip_y: tex.flip_y,
+        srgb: tex.srgb,
     }
 }
 
@@ -128,17 +160,17 @@ fn setup(
 }
 
 #[derive(Resource)]
-struct Receiver(Mutex<mpsc::Receiver<Dmatex>>);
+struct Receiver(Mutex<watch::Receiver<Option<Dmatex>>>);
 #[derive(Resource)]
 struct CubeMat(Handle<StandardMaterial>);
 
 pub struct TestInterface {
-    pub dmatex_channel: mpsc::Sender<Dmatex>,
+    pub dmatex_channel: watch::Sender<Option<Dmatex>>,
 }
 
 #[zbus::interface(name = "dev.schmarni.bevy_dmabuf.dmatex")]
 impl TestInterface {
     fn dmatex(&self, dmabuf: Dmatex) {
-        _ = self.dmatex_channel.send(dmabuf);
+        _ = self.dmatex_channel.send(Some(dmabuf));
     }
 }
