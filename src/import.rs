@@ -32,7 +32,7 @@ use bevy::{
 };
 use drm_fourcc::DrmFourcc;
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, debug_span, error, warn};
 use wgpu::{
     TextureUsages, TextureViewDescriptor,
     hal::{MemoryFlags, TextureDescriptor, TextureUses, vulkan::Api as Vulkan},
@@ -103,14 +103,16 @@ impl ImportedDmatexs {
         images: &mut Assets<Image>,
         tex: ImportedTexture,
     ) -> Handle<Image> {
-        let handle = images.add(Image::new_fill(
-            tex.texture.size(),
-            tex.texture.dimension(),
-            &[255, 255, 255, 255],
-            tex.texture.format(),
-            RenderAssetUsages::RENDER_WORLD,
-        ));
+        let handle = debug_span!("creating dummy image").in_scope(|| {
+            images.add(Image::new_uninit(
+                tex.texture.size(),
+                tex.texture.dimension(),
+                tex.texture.format(),
+                RenderAssetUsages::RENDER_WORLD,
+            ))
+        });
 
+        let _span = debug_span!("inserting image handle").entered();
         #[expect(clippy::unwrap_used)]
         self.0
             .lock()
@@ -167,10 +169,9 @@ fn insert_dmatex_into_gpu_images(
 
 fn get_handle(images: &mut Assets<Image>, buf: &Dmatex) -> Result<Handle<Image>, ImportError> {
     let desc = get_imported_descriptor(buf)?;
-    Ok(images.add(Image::new_fill(
+    Ok(images.add(Image::new_uninit(
         desc.size,
         desc.dimension,
-        &[255, 255, 255, 255],
         desc.format,
         RenderAssetUsages::RENDER_WORLD,
     )))
