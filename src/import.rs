@@ -235,21 +235,19 @@ fn memory_barrier(
                     },
                 )
                 .unwrap();
-            tracing::info!(texes_len = texes.len());
 
             let vk_submit_span = debug_span!("VK dmatex image acquire").entered();
             for image in texes
                 .iter()
-                .filter_map(|v| match dbg!(v.1) {
+                .filter_map(|v| match v.1 {
                     DmaImage::UnImported(_, _, _) => None,
                     DmaImage::Imported(imported_texture) => Some(imported_texture),
                 })
                 .filter_map(|i| {
                     i.texture
-                        .as_hal::<Vulkan, _, _>(|i| dbg!(i.map(|i| i.raw_handle())))
+                        .as_hal::<Vulkan, _, _>(|i| i.map(|i| i.raw_handle()))
                 })
             {
-                tracing::info!("recording pipeline barrier");
                 vk_dev.cmd_pipeline_barrier(
                     buffer,
                     vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -526,6 +524,7 @@ pub fn import_texture(
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .array_layers(1)
                     .mip_levels(1)
+                    .initial_layout(vk::ImageLayout::GENERAL)
                     .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
                     .push_next(&mut external_memory_info);
                 if let Some(info) = drm_explicit_create_info.as_mut() {
