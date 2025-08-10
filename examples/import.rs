@@ -26,7 +26,7 @@ use bevy::{
 };
 use bevy_dmabuf::{
     dmatex::Dmatex,
-    import::{DmabufImportPlugin, ImportedDmatexs},
+    import::{DmabufImportPlugin, DmatexUsage, ImportedDmatexs},
     wgpu_init::add_dmabuf_init_plugin,
 };
 
@@ -76,7 +76,7 @@ fn import_tex(
 ) {
     if let Some(buf) = receiv.0.get_mut().unwrap().try_iter().last() {
         info!("got dmatex");
-        match dmatexs.set(&mut images, buf, None) {
+        match dmatexs.set(&mut images, buf, DmatexUsage::Sampling, None) {
             Ok(image) => {
                 pending.0 = Some(image);
             }

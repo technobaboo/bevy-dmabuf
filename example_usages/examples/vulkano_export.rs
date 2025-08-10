@@ -136,8 +136,6 @@ async fn main() {
         srgb: true,
     };
 
-    proxy.dmatex(dmatex).await.unwrap();
-
     let data_len = size.x * size.y * 4;
 
     let buffer = vulkano::buffer::Buffer::new_slice::<u8>(
@@ -186,6 +184,7 @@ async fn main() {
         .await
         .unwrap();
 
+    proxy.dmatex(dmatex).await.unwrap();
     tokio::signal::ctrl_c().await.unwrap()
 }
 
