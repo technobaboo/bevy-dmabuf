@@ -9,7 +9,6 @@ description = "allows importing linux dmabufs into a bevy image"
 keywords = ["bevy", "dmabuf", "dmatex"]
 
 [dependencies]
-ash = "0.38.0"
 bevy = { version = "0.16", features = [
 	"bevy_render",
 	"bevy_image",
@@ -25,8 +24,9 @@ wgpu = "24"
 zvariant = "5.7.0"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+ash = "0.38.0"
 bevy = { version = "0.16", default-features = true }
+tokio = { version = "1", features = ["full"] }
 zbus = "5.11.0"
 
 [workspace]
