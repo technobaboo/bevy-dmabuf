@@ -24,7 +24,6 @@ wgpu = "24"
 zvariant = "5.7.0"
 
 [dev-dependencies]
-ash = "0.38.0"
 bevy = { version = "0.16", default-features = true }
 tokio = { version = "1", features = ["full"] }
 zbus = "5.11.0"
